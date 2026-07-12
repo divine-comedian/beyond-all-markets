@@ -38,11 +38,18 @@ cd /d "%~dp0"
 set NAME=%1
 if "%NAME%"=="" set NAME=Viewer%RANDOM%
 
-if not exist "data\\packages" (
-  echo First run: downloading Beyond All Reason game data (~2GB)...
-  set PRD_RAPID_REPO_MASTER=https://repos-cdn.beyondallreason.dev/repos.gz
-  set PRD_RAPID_USE_STREAMER=false
-  engine\\pr-downloader.exe --filesystem-writepath "%~dp0data" --download-game $GAME_RAPID_TAG
+set PRD_RAPID_REPO_MASTER=https://repos-cdn.beyondallreason.dev/repos.gz
+set PRD_RAPID_USE_STREAMER=false
+set BARDATA=%LOCALAPPDATA%\\Programs\\Beyond-All-Reason\\data
+
+if exist "%BARDATA%\\pool" (
+  echo Reusing existing BAR install at %BARDATA% - fetching only missing pieces...
+  set SPRING_DATADIR=%BARDATA%
+  engine\\pr-downloader.exe --filesystem-writepath "%BARDATA%" --download-game "$GAME_NAME"
+  engine\\pr-downloader.exe --filesystem-writepath "%BARDATA%" --download-map "$MAP_NAME"
+) else if not exist "data\\packages" (
+  echo No BAR install found - downloading game data (~2GB, one time)...
+  engine\\pr-downloader.exe --filesystem-writepath "%~dp0data" --download-game "$GAME_NAME"
   engine\\pr-downloader.exe --filesystem-writepath "%~dp0data" --download-map "$MAP_NAME"
 )
 
