@@ -1,0 +1,5 @@
+engine/
+data/
+__pycache__/
+*.sdfz
+infolog*.txt
