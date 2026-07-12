@@ -11,7 +11,7 @@ function widget:GetInfo()
 end
 
 local DEBUG = false
-local BUILD = "MW v3"
+local BUILD = "MW v5"
 
 -- Team identity (match the start script)
 local BTC = { 0.97, 0.58, 0.10 }      -- team 0, fed by taker buys
@@ -38,8 +38,10 @@ local pulses     = {}                -- {team, metal, energy, vol, born}
 local whales     = {}                -- newest-first {isBuy, qty, price, venue}
 local tape       = {}                -- rolling per-second {buy, sell} for flow bars
 local priceHist  = {}                -- rolling per-second price for 1m %
-local prevLiq    = { [0] = 0, [1] = 0 }
-local liqFlash   = { [0] = 0, [1] = 0 }
+local interFlash = 0                 -- os.clock when the intermission banner appeared
+local prevInter  = 0
+local prevDropF  = 0                 -- last seen mkt_drop_frame
+local dropAt     = -10               -- os.clock of last reinforcement drop
 
 local function getP(name)
     return Spring.GetGameRulesParam(name) or 0
@@ -116,11 +118,13 @@ function widget:GameFrame(f)
     pulses[#pulses + 1] = { team = 1, metal = getP("mkt_m1"), energy = getP("mkt_e1"),
                             vol = getP("mkt_sell"), born = now }
 
-    for team = 0, 1 do
-        local liq = getP("mkt_liq" .. team)
-        if liq > 0 and prevLiq[team] == 0 then liqFlash[team] = now end
-        prevLiq[team] = liq
-    end
+    local inter = getP("mkt_intermission")
+    if inter > 0 and prevInter == 0 then interFlash = now end
+    prevInter = inter
+
+    local dropF = getP("mkt_drop_frame")
+    if dropF > 0 and dropF ~= prevDropF then dropAt = now end
+    prevDropF = dropF
 end
 
 function widget:DrawWorld()
@@ -206,11 +210,14 @@ function widget:DrawScreen()
                 local c = TEAMCOL[p.team]
                 gl.Color(c[1], c[2], c[3], 1 - age)
                 local size = (36 + 30 * logScale(p.vol)) * s
-                -- 1s %% is ~0.00; a rolling 1-minute %% is legible
+                -- 1s %% is ~0.00; a rolling 1-minute %% is legible.
+                -- Team-relative sign: Bears (team 1) profit when price falls,
+                -- so their pulse shows the inverse of the market move.
                 local pct60 = 0
                 if #priceHist > 1 and priceHist[1] > 0 then
                     pct60 = (lastPrice - priceHist[1]) / priceHist[1] * 100
                 end
+                if p.team == 1 then pct60 = -pct60 end
                 gl.Text(string.format("%+.3f%%  +%d metal  +%d energy", pct60, p.metal, p.energy),
                     sx, sy + 70 * s * age, size, "co")
             end
@@ -256,21 +263,38 @@ function widget:DrawScreen()
     gl.Color(1, 1, 1, 0.5)
     gl.Text(BUILD, vsx - 8 * s, 8 * s, 12 * s, "ro")
 
-    ---------------------------------------------------------------- liquidation banner
+    ---------------------------------------------------------------- scoreboard (session wins)
+    local w0, w1 = getP("mkt_wins0"), getP("mkt_wins1")
+    local roundNo = getP("mkt_round")
+    gl.Color(BTC[1], BTC[2], BTC[3], 0.95)
+    gl.Text(string.format("BTC %d", w0), vsx / 2 - 60 * s, vsy - 40 * s, 30 * s, "ro")
+    gl.Color(1, 1, 1, 0.9)
+    gl.Text("—", vsx / 2, vsy - 40 * s, 30 * s, "co")
+    gl.Color(USD[1], USD[2], USD[3], 0.95)
+    gl.Text(string.format("%d USD", w1), vsx / 2 + 60 * s, vsy - 40 * s, 30 * s, "o")
+    gl.Color(1, 1, 1, 0.6)
+    gl.Text("ROUND " .. math.max(1, roundNo), vsx / 2, vsy - 64 * s, 15 * s, "co")
+
+    ---------------------------------------------------------------- round intermission banner
     local frame = Spring.GetGameFrame()
-    local by = vsy * 0.70
-    for team = 0, 1 do
-        local liq = getP("mkt_liq" .. team)
-        if liq > frame then
-            local c = TEAMCOL[team]
-            if now - liqFlash[team] < FLASH_LIFE then
-                gl.Color(c[1], c[2], c[3], 0.5 + 0.5 * math.abs(math.sin(now * 6)))
-                gl.Text(TEAMNAME[team] .. " COMMANDER LIQUIDATED", vsx / 2, by, 42 * s, "co")
-            end
-            local secs = math.ceil((liq - frame) / 30)
-            gl.Color(c[1], c[2], c[3], 0.9)
-            gl.Text(TEAMNAME[team] .. " reinforcements in " .. secs .. "s", vsx / 2, by - 34 * s, 20 * s, "co")
-            by = by - 70 * s
-        end
+    local inter = getP("mkt_intermission")
+    if inter > frame then
+        local winner = getP("mkt_roundwinner")
+        local c = TEAMCOL[winner] or WHITE
+        gl.Color(c[1], c[2], c[3], 0.5 + 0.5 * math.abs(math.sin(now * 6)))
+        gl.Text("ROUND TO " .. (TEAMNAME[winner] or "?"), vsx / 2, vsy * 0.70, 46 * s, "co")
+        gl.Color(1, 1, 1, 0.9)
+        gl.Text("next round in " .. math.ceil((inter - frame) / 30) .. "s",
+            vsx / 2, vsy * 0.70 - 40 * s, 20 * s, "co")
+    end
+
+    ---------------------------------------------------------------- reinforcement drop banner
+    if now - dropAt < 4 then
+        local dTeam = getP("mkt_drop_team")
+        local c = TEAMCOL[dTeam] or WHITE
+        local label = getP("mkt_drop_kind") == 2 and "WHALE DEPLOY" or "MARKET FLIP"
+        gl.Color(c[1], c[2], c[3], 0.6 + 0.4 * math.abs(math.sin(now * 4)))
+        gl.Text(string.format("%s — %s +%d", label, TEAMNAME[dTeam] or "?", getP("mkt_drop_n")),
+            vsx / 2, vsy * 0.62, 30 * s, "co")
     end
 end
