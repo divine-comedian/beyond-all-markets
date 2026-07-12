@@ -18,21 +18,32 @@ start_feed() {
 
 start_engine() {
     bash "$ROOT/scripts/gen-startscript.sh" 'Market War $VERSION' > /dev/null
+    # publish the current mutator for spectator auto-sync
+    mkdir -p "$DATA_DIR/www"
+    ( cd "$ROOT/mutator" && rm -f "$DATA_DIR/www/MarketWar.sdd.zip" \
+      && zip -qr "$DATA_DIR/www/MarketWar.sdd.zip" MarketWar.sdd )
     ( cd "$DATA_DIR" && LD_LIBRARY_PATH="$SYSLIBS_DIR" \
         "$ENGINE_DIR/$BIN" --write-dir "$DATA_DIR" script.txt ) \
         >> "$DATA_DIR/logs/engine.log" 2>&1 &
     ENGINE_PID=$!
 }
 
+start_www() {
+    ( cd "$DATA_DIR/www" && python3 -m http.server "$MUTATOR_HTTP_PORT" --bind 0.0.0.0 ) \
+        >> "$DATA_DIR/logs/www.log" 2>&1 &
+    WWW_PID=$!
+}
+
 stop_all() {
-    kill "$FEED_PID" "$ENGINE_PID" 2>/dev/null
+    kill "$FEED_PID" "$ENGINE_PID" "$WWW_PID" 2>/dev/null
     exit 0
 }
 trap stop_all INT TERM
 
 start_feed
 start_engine
-echo "$(date -Is) war running: feedd=$FEED_PID engine=$ENGINE_PID (mode=$MODE bin=$BIN)"
+start_www
+echo "$(date -Is) war running: feedd=$FEED_PID engine=$ENGINE_PID www=$WWW_PID (mode=$MODE bin=$BIN)"
 
 while true; do
     sleep 10
@@ -43,5 +54,9 @@ while true; do
     if ! kill -0 "$ENGINE_PID" 2>/dev/null; then
         echo "$(date -Is) engine died, restarting match"
         start_engine
+    fi
+    if ! kill -0 "$WWW_PID" 2>/dev/null; then
+        echo "$(date -Is) mutator http server died, restarting"
+        start_www
     fi
 done

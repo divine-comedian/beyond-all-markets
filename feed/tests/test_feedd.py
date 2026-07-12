@@ -41,8 +41,8 @@ def test_format_line_empty_bucket_keeps_last_price():
 
 
 def test_format_trade_buy_and_sell():
-    assert format_trade(is_buyer_maker=False, qty=0.5123, price=64000.12) == "trd:B:0.5123:64000.12"
-    assert format_trade(is_buyer_maker=True, qty=0.01, price=64000.0) == "trd:S:0.0100:64000.00"
+    assert format_trade(is_buyer_maker=False, qty=0.5123, price=64000.12, venue="BN") == "trd:B:0.5123:64000.12:BN"
+    assert format_trade(is_buyer_maker=True, qty=0.01, price=64000.0, venue="CB") == "trd:S:0.0100:64000.00:CB"
 
 
 def test_throttle_caps_small_trades_per_second():

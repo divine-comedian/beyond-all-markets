@@ -40,9 +40,9 @@ def format_line(bucket):
     return f"mkt:{bucket['buy']:.4f}:{bucket['sell']:.4f}:{bucket['price']:.2f}"
 
 
-def format_trade(is_buyer_maker, qty, price):
+def format_trade(is_buyer_maker, qty, price, venue="BN"):
     side = "S" if is_buyer_maker else "B"
-    return f"trd:{side}:{qty:.4f}:{price:.2f}"
+    return f"trd:{side}:{qty:.4f}:{price:.2f}:{venue}"
 
 
 class TradeThrottle:
@@ -110,7 +110,7 @@ async def binance_trades(bucket, bc, throttle):
                 m, q, p = t["m"], float(t["q"]), float(t["p"])
                 bucket_trade(bucket, m, q, p)
                 if throttle.allow(q, time.time()):
-                    bc.send(format_trade(m, q, p))
+                    bc.send(format_trade(m, q, p, "BN"))
 
     await _reconnecting("binance-trades", run)
 
@@ -152,7 +152,7 @@ async def coinbase_trades(bucket, bc, throttle):
                 if px0:
                     bucket["price"] = px0   # binance_book owns price continuity
                 if throttle.allow(q, time.time()):
-                    bc.send(format_trade(m, q, p))
+                    bc.send(format_trade(m, q, p, "CB"))
 
     await _reconnecting("coinbase-trades", run)
 
@@ -166,7 +166,7 @@ async def synthetic_trades(bucket, bc, throttle):
             m, q = random.random() < 0.5, random.expovariate(8)
             bucket_trade(bucket, m, q, price)
             if throttle.allow(q, time.time()):
-                bc.send(format_trade(m, q, price))
+                bc.send(format_trade(m, q, price, "SYN"))
         await asyncio.sleep(0.2)
 
 

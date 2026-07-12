@@ -11,6 +11,7 @@ function widget:GetInfo()
 end
 
 local DEBUG = false
+local BUILD = "MW v3"
 
 -- Team identity (match the start script)
 local BTC = { 0.97, 0.58, 0.10 }      -- team 0, fed by taker buys
@@ -24,7 +25,8 @@ local TEAMCOL  = { [0] = BTC, [1] = USD }
 local VOL_CAP    = 5                  -- BTC/s for a full-scale pulse
 local PULSE_LIFE = 2.2
 local FLASH_LIFE = 3.0
-local TRADE_ROWS = 14
+local WHALE_ROWS = 5
+local WHALE_MIN  = 0.10               -- BTC; prints this size get listed
 
 local lastPrice, prevPrice = 0, 0
 local pctChange, priceDelta = 0, 0
@@ -33,7 +35,9 @@ local lastSampledFrame = -1
 
 local basePos    = {}                -- teamID -> {x,y,z} (fixed start positions)
 local pulses     = {}                -- {team, metal, energy, vol, born}
-local trades     = {}                -- newest-first {isBuy, qty, price}
+local whales     = {}                -- newest-first {isBuy, qty, price, venue}
+local tape       = {}                -- rolling per-second {buy, sell} for flow bars
+local priceHist  = {}                -- rolling per-second price for 1m %
 local prevLiq    = { [0] = 0, [1] = 0 }
 local liqFlash   = { [0] = 0, [1] = 0 }
 
@@ -46,11 +50,13 @@ local function logScale(v)
 end
 
 local nTrades = 0
-local function OnTrade(isBuy, qty, price)
+local function OnTrade(isBuy, qty, price, venue)
     nTrades = nTrades + 1
     if DEBUG and nTrades % 20 == 1 then Spring.Echo("MKTWAR-HUD trd#" .. nTrades) end
-    table.insert(trades, 1, { isBuy = isBuy == 1, qty = qty, price = price })
-    if #trades > TRADE_ROWS then table.remove(trades) end
+    if qty >= WHALE_MIN then
+        table.insert(whales, 1, { isBuy = isBuy == 1, qty = qty, price = price, venue = venue or "?" })
+        if #whales > WHALE_ROWS then table.remove(whales) end
+    end
 end
 
 local mapCenter
@@ -59,7 +65,7 @@ function widget:Initialize()
     mapCenter = { x = Game.mapSizeX / 2, z = Game.mapSizeZ / 2 }
     -- widget-facing handler proxy injects the owner: 2-arg form (name, value)
     local ok = widgetHandler:RegisterGlobal("MarketWarTrade", OnTrade)
-    Spring.Echo("MKTWAR-HUD RegisterGlobal MarketWarTrade => " .. tostring(ok))
+    Spring.Echo("MKTWAR-HUD BUILD " .. BUILD .. " RegisterGlobal MarketWarTrade => " .. tostring(ok))
     -- force team colors on this client; BAR's auto-color otherwise repaints
     Spring.SetTeamColor(0, BTC[1], BTC[2], BTC[3])
     Spring.SetTeamColor(1, USD[1], USD[2], USD[3])
@@ -98,6 +104,11 @@ function widget:GameFrame(f)
         Spring.SetTeamColor(0, BTC[1], BTC[2], BTC[3])
         Spring.SetTeamColor(1, USD[1], USD[2], USD[3])
     end
+
+    tape[#tape + 1] = { buy = getP("mkt_buy"), sell = getP("mkt_sell") }
+    if #tape > 10 then table.remove(tape, 1) end
+    priceHist[#priceHist + 1] = lastPrice
+    if #priceHist > 60 then table.remove(priceHist, 1) end
 
     local now = os.clock()
     pulses[#pulses + 1] = { team = 0, metal = getP("mkt_m0"), energy = getP("mkt_e0"),
@@ -195,30 +206,55 @@ function widget:DrawScreen()
                 local c = TEAMCOL[p.team]
                 gl.Color(c[1], c[2], c[3], 1 - age)
                 local size = (36 + 30 * logScale(p.vol)) * s
-                -- 1s % moves are ~0.00x% and rendered as 0.00; the dollar
-                -- delta is always legible, so lead with that
-                local move = string.format("%s$%.1f", priceDelta >= 0 and "+" or "-", math.abs(priceDelta))
-                gl.Text(string.format("%s  +%d metal  +%d energy", move, p.metal, p.energy),
+                -- 1s %% is ~0.00; a rolling 1-minute %% is legible
+                local pct60 = 0
+                if #priceHist > 1 and priceHist[1] > 0 then
+                    pct60 = (lastPrice - priceHist[1]) / priceHist[1] * 100
+                end
+                gl.Text(string.format("%+.3f%%  +%d metal  +%d energy", pct60, p.metal, p.energy),
                     sx, sy + 70 * s * age, size, "co")
             end
         end
     end
 
-    ---------------------------------------------------------------- trade feed (right, 3/4 up)
-    local tw, rh = 250 * s, 19 * s
-    local tx = vsx - tw - 12 * s
+    ---------------------------------------------------------------- order flow (right, 3/4 up)
+    local tw = 280 * s
+    local tx = vsx - tw - 14 * s
     local ty = vsy * 0.75
-    gl.Color(0, 0, 0, 0.45)
-    gl.Rect(tx - 8 * s, ty - TRADE_ROWS * rh - 8 * s, tx + tw, ty + 26 * s)
-    gl.Color(1, 1, 1, 0.9)
-    gl.Text("LIVE TRADES  BTC/USDT", tx, ty + 8 * s, 14 * s, "o")
-    for i, t in ipairs(trades) do
-        local c = t.isBuy and BTC or USD
-        local alpha = 1 - (i - 1) / TRADE_ROWS * 0.7
-        gl.Color(c[1], c[2], c[3], alpha)
-        gl.Text(string.format("%s  %8.4f  @ %.1f", t.isBuy and "BUY " or "SELL", t.qty, t.price),
-            tx, ty - i * rh, 15 * s, "o")
+    local buy10, sell10 = 0, 0
+    for _, t in ipairs(tape) do buy10 = buy10 + t.buy; sell10 = sell10 + t.sell end
+    local total = buy10 + sell10
+    local panelH = (70 + WHALE_ROWS * 22 + 30) * s
+    gl.Color(0, 0, 0, 0.5)
+    gl.Rect(tx - 10 * s, ty - panelH, tx + tw, ty + 26 * s)
+    gl.Color(1, 1, 1, 0.95)
+    gl.Text("ORDER FLOW  last 10s", tx, ty + 8 * s, 15 * s, "o")
+
+    local barW, barH = tw - 20 * s, 16 * s
+    local function flowBar(y, vol, c, label)
+        local frac = total > 0 and vol / total or 0
+        gl.Color(c[1], c[2], c[3], 0.25)
+        gl.Rect(tx, y, tx + barW, y + barH)
+        gl.Color(c[1], c[2], c[3], 0.95)
+        gl.Rect(tx, y, tx + barW * frac, y + barH)
+        gl.Color(1, 1, 1, 1)
+        gl.Text(string.format("%s %.3f BTC", label, vol), tx + 4 * s, y + 3 * s, 13 * s, "o")
     end
+    flowBar(ty - 24 * s, buy10, BTC, "BUY ")
+    flowBar(ty - 46 * s, sell10, USD, "SELL")
+
+    gl.Color(1, 1, 1, 0.8)
+    gl.Text("WHALE PRINTS  (>= " .. WHALE_MIN .. " BTC)", tx, ty - 70 * s, 13 * s, "o")
+    for i, t in ipairs(whales) do
+        local c = t.isBuy and BTC or USD
+        gl.Color(c[1], c[2], c[3], 1 - (i - 1) * 0.12)
+        gl.Text(string.format("%s %.3f @ %.0f  %s", t.isBuy and "BUY " or "SELL", t.qty, t.price, t.venue),
+            tx, ty - (70 + i * 22) * s, 16 * s, "o")
+    end
+
+    -- build tag (version check: stale packs won't show this)
+    gl.Color(1, 1, 1, 0.5)
+    gl.Text(BUILD, vsx - 8 * s, 8 * s, 12 * s, "ro")
 
     ---------------------------------------------------------------- liquidation banner
     local frame = Spring.GetGameFrame()

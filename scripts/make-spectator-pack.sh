@@ -41,6 +41,16 @@ if "%NAME%"=="" set NAME=Viewer%RANDOM%
 set PRD_RAPID_REPO_MASTER=https://repos-cdn.beyondallreason.dev/repos.gz
 set PRD_RAPID_USE_STREAMER=false
 
+rem --- auto-sync the mutator from the host so versions can never drift ---
+curl.exe -s -m 15 -o mw.zip http://$HOST_IP:$MUTATOR_HTTP_PORT/MarketWar.sdd.zip
+if exist mw.zip (
+  echo Updating Market War mod from host...
+  powershell -NoProfile -Command "Remove-Item -Recurse -Force 'data\\games\\MarketWar.sdd' -ErrorAction SilentlyContinue; Expand-Archive -Force 'mw.zip' 'data\\games'"
+  del mw.zip
+) else (
+  echo WARNING: could not fetch current mod from host - using local copy, may be stale
+)
+
 set BARDATA=
 if exist "C:\\Program Files\\Beyond-All-Reason\\data\\pool" set "BARDATA=C:\\Program Files\\Beyond-All-Reason\\data"
 if exist "%LOCALAPPDATA%\\Programs\\Beyond-All-Reason\\data\\pool" set "BARDATA=%LOCALAPPDATA%\\Programs\\Beyond-All-Reason\\data"
