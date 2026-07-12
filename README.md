@@ -36,8 +36,9 @@ synced gadget market_income.lua ──AddTeamResource──> Bulls/Bears economi
 ```
 
 - `mutator/MarketWar.sdd` — dev-archive mutator on top of BAR (BAR repo untouched):
-  - `market_income.lua` — 1s income ticks: `baseline + volume × PER_BTC`, surge-aware, deep storage
-  - `market_respawn.lua` — commander respawn + loser surge (the endless part)
+  - `market_income.lua` — 1s income ticks: `baseline + volume × PER_BTC`, deep storage
+  - `market_rounds.lua` — commander death = scored round end: nuke both bases, wipe all units, respawn fresh (session scoreboard)
+  - `market_reinforce.lua` — market events spawn units directly: sustained price flip rescues the field underdog; 0.5+ BTC whale buckets deploy squads for their side
   - `market_debug.lua` — heartbeat log line every 10s (`MKTWAR f=...`)
 - `feed/feedd.py` — trade bucketing + TCP broadcast (`--synthetic` for offline dev); `pytest feed/tests`
 - `scripts/run-war.sh` — supervisor: restarts feedd/engine on crash
@@ -50,8 +51,10 @@ synced gadget market_income.lua ──AddTeamResource──> Bulls/Bears economi
 | `METAL_PER_BTC` | 400 | metal per 1 BTC taker volume, per second |
 | `ENERGY_PER_BTC` | 4000 | energy ditto |
 | `BASELINE_METAL/ENERGY` | 4 / 40 | per-second floor so a dead market still skirmishes |
-| `RESPAWN_COOLDOWN_SEC` | 45 | commander respawn delay |
-| `RESPAWN_SURGE_MULT/SEC` | 3 / 60 | loser income surge after respawn |
+| `LOW_ECO` | 1 | eco structures buildable at 10% output via `tweakdefs` (v1 stripped them entirely — made BARbarIAn go limp); market income stays primary |
+| `ROUND_INTERMISSION_SEC` | 10 | pause between commander kill and fresh spawn |
+| `FLIP_DROP_PCT/HOLD/COOLDOWN` | 0.05% / 30s / 120s | sustained 1-min flip against the dominant side drops underdog reinforcements |
+| `WHALE_SPAWN_BTC` | 0.5 | 1s volume bucket that instantly deploys a squad for that side |
 
 Quiet market ≈ 0.002-0.01 BTC/s (≈ +1-4 metal/s); a 1 BTC/s burst ≈ +400 metal/s flood.
 Edit values in `mutator/.../market_income.lua` + `war.env` together.

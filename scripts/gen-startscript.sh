@@ -4,6 +4,16 @@ source "$(dirname "$0")/../config/war.env"
 MUTATOR="${1:-}"   # pass "Market War $VERSION" later to play the mutator; empty = plain BAR
 GAMETYPE="${MUTATOR:-$GAME_NAME}"
 
+# low-eco experiment: eco structures buildable at 10% output; market income is
+# primary. BAR executes the base64 `tweakdefs` modoption after unitdefs_post.
+# BAR's lua decoder is base64url-only (- and _; NO + or /) and silently DROPS
+# bytes on standard-alphabet chars — hence the tr. Verified against the
+# decoder in the game archive (base64bytes table has no '+' / '/' entries).
+TWEAKDEFS_LINE=""
+if [[ "${LOW_ECO:-0}" == "1" ]]; then
+    TWEAKDEFS_LINE="tweakdefs=$(base64 -w0 < "$ROOT/config/tweakdefs-low-eco.lua" | tr '+/' '-_');"
+fi
+
 cat > "$DATA_DIR/script.txt" <<EOF
 [GAME]
 {
@@ -23,6 +33,7 @@ cat > "$DATA_DIR/script.txt" <<EOF
         deathmode=neverend;
         MinSpeed=1;
         MaxSpeed=1;
+        $TWEAKDEFS_LINE
     }
     [PLAYER0]
     {
@@ -35,6 +46,7 @@ cat > "$DATA_DIR/script.txt" <<EOF
         ShortName=BARb;
         Host=0;
         Team=$BULLS_TEAM;
+        [OPTIONS] { disabledunits=$AI_DISABLED_UNITS; }
     }
     [AI1]
     {
@@ -42,6 +54,7 @@ cat > "$DATA_DIR/script.txt" <<EOF
         ShortName=BARb;
         Host=0;
         Team=$BEARS_TEAM;
+        [OPTIONS] { disabledunits=$AI_DISABLED_UNITS; }
     }
     [TEAM0]
     {
