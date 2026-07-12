@@ -40,17 +40,23 @@ if "%NAME%"=="" set NAME=Viewer%RANDOM%
 
 set PRD_RAPID_REPO_MASTER=https://repos-cdn.beyondallreason.dev/repos.gz
 set PRD_RAPID_USE_STREAMER=false
-set BARDATA=%LOCALAPPDATA%\\Programs\\Beyond-All-Reason\\data
 
-if exist "%BARDATA%\\pool" (
-  echo Reusing existing BAR install at %BARDATA% - fetching only missing pieces...
-  set SPRING_DATADIR=%BARDATA%
-  engine\\pr-downloader.exe --filesystem-writepath "%BARDATA%" --download-game "$GAME_NAME"
-  engine\\pr-downloader.exe --filesystem-writepath "%BARDATA%" --download-map "$MAP_NAME"
+set BARDATA=
+if exist "C:\\Program Files\\Beyond-All-Reason\\data\\pool" set "BARDATA=C:\\Program Files\\Beyond-All-Reason\\data"
+if exist "%LOCALAPPDATA%\\Programs\\Beyond-All-Reason\\data\\pool" set "BARDATA=%LOCALAPPDATA%\\Programs\\Beyond-All-Reason\\data"
+
+if defined BARDATA (
+  echo Reusing existing BAR install at %BARDATA%
+  set "SPRING_DATADIR=%BARDATA%"
+  rem try delta-fetch into the existing pool; Program Files may deny writes
+  engine\\pr-downloader.exe --filesystem-writepath "%BARDATA%" --download-game "$GAME_NAME" --download-map "$MAP_NAME"
+  if errorlevel 1 (
+    echo Existing install not writable - downloading into the pack instead (full download)...
+    engine\\pr-downloader.exe --filesystem-writepath "%~dp0data" --download-game "$GAME_NAME" --download-map "$MAP_NAME"
+  )
 ) else if not exist "data\\packages" (
   echo No BAR install found - downloading game data (~2GB, one time)...
-  engine\\pr-downloader.exe --filesystem-writepath "%~dp0data" --download-game "$GAME_NAME"
-  engine\\pr-downloader.exe --filesystem-writepath "%~dp0data" --download-map "$MAP_NAME"
+  engine\\pr-downloader.exe --filesystem-writepath "%~dp0data" --download-game "$GAME_NAME" --download-map "$MAP_NAME"
 )
 
 (
