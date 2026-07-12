@@ -5,3 +5,4 @@ __pycache__/
 infolog*.txt
 engine-master/
 syslibs/
+dist/
