@@ -5,7 +5,7 @@
 function gadget:GetInfo()
     return {
         name    = "AI namer",
-        desc    = "Market War: AI teams display as BTC/USD",
+        desc    = "Market War: AI teams display as lane asset names",
         author  = "bar-market-war",
         date    = "2026",
         license = "GNU GPL, v2 or later",
@@ -16,7 +16,11 @@ end
 
 if not gadgetHandler:IsSyncedCode() then return end
 
-local ASSET = { [0] = "BTC", [1] = "USD" }
+local ASSET = {
+    [0] = "BTC",  [1] = "USD-BTC",
+    [2] = "SP500", [3] = "USD-SP500",
+    [4] = "GOLD", [5] = "USD-GOLD",
+}
 
 function gadget:Initialize()
     for _, teamID in ipairs(Spring.GetTeamList()) do

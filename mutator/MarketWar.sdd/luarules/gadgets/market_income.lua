@@ -1,7 +1,7 @@
 function gadget:GetInfo()
     return {
         name    = "Market Income",
-        desc    = "BTC taker buy/sell volume feeds Bulls/Bears income",
+        desc    = "Per-market taker flow feeds three asset/USD lane economies",
         author  = "bar-market-war",
         layer   = 0,
         enabled = true,
@@ -10,13 +10,16 @@ end
 
 local DEBUG = false
 
--- Tuning (mirror config/war.env; live flow is ~0.001-0.05 BTC/s quiet, ~1+ spike)
-local BULLS_TEAM, BEARS_TEAM = 0, 1
-local METAL_PER_BTC   = 400
-local ENERGY_PER_BTC  = 4000
+-- Pairs: market -> {asset team, usd team, metal/energy per volume unit, whale threshold}
+-- Multipliers are notional-normalized (~0.00625 metal per USD): 1 BTC ~ $64k,
+-- 1 GOLD contract = 1 oz ~ $4.1k, 1 SP500 contract ~ $7.6k.
+local PAIRS = {
+    BTC  = { asset = 0, usd = 1, m = 400, e = 4000 },
+    SPX  = { asset = 2, usd = 3, m = 47,  e = 470 },
+    GOLD = { asset = 4, usd = 5, m = 25,  e = 250 },
+}
 local BASELINE_METAL  = 6
 local BASELINE_ENERGY = 60
-local FEED_HOST, FEED_PORT = "127.0.0.1", 8642
 
 -- CircuitAI plans tiers/production off measured income rates; raw market
 -- buckets (zero for minutes, then a burst) make its planner flap. Income is
@@ -26,37 +29,50 @@ local SMOOTH_ALPHA = 1 / 20
 
 if gadgetHandler:IsSyncedCode() then
     ----------------------------------------------------------------- SYNCED
-    local pendingBuy, pendingSell, price = 0, 0, 0
-    local smoothBuy, smoothSell = 0, 0
     GG.MarketWar = GG.MarketWar or {}
-    GG.MarketWar.buyRate, GG.MarketWar.sellRate, GG.MarketWar.price = 0, 0, 0
     GG.MarketWar.surge = GG.MarketWar.surge or {}
+    GG.MarketWar.rates = {}   -- mkt -> {buy, sell} (raw, per last tick)
+    GG.MarketWar.price = {}   -- mkt -> price
+
+    local pending = {}        -- mkt -> {buy, sell, price}
+    local smooth  = {}        -- mkt -> {buy, sell}
+    for mkt in pairs(PAIRS) do
+        pending[mkt] = { buy = 0, sell = 0, price = 0 }
+        smooth[mkt]  = { buy = 0, sell = 0 }
+        GG.MarketWar.rates[mkt] = { buy = 0, sell = 0 }
+        GG.MarketWar.price[mkt] = 0
+    end
 
     function gadget:GameStart()
-        -- deep storage: market bursts bank instead of overflowing the
-        -- default 1100 cap (verified overflow in end-to-end test)
-        for _, teamID in ipairs({ BULLS_TEAM, BEARS_TEAM }) do
-            Spring.SetTeamResource(teamID, "ms", 100000)
-            Spring.SetTeamResource(teamID, "es", 1000000)
+        -- deep storage: market bursts bank instead of overflowing the default cap
+        for _, p in pairs(PAIRS) do
+            for _, teamID in ipairs({ p.asset, p.usd }) do
+                Spring.SetTeamResource(teamID, "ms", 100000)
+                Spring.SetTeamResource(teamID, "es", 1000000)
+            end
         end
     end
 
     function gadget:RecvLuaMsg(msg, playerID)
-        local b, s, p = msg:match("^mkt:([%d%.]+):([%d%.]+):([%d%.]+)$")
-        if b then
+        -- v2 bucket lines only; legacy numeric lines fall through harmlessly
+        local mkt, b, s, p = msg:match("^mkt:(%u+):([%d%.]+):([%d%.]+):([%d%.]+)$")
+        if mkt then
             if playerID ~= 0 then return true end   -- only the hosting player feeds
-            pendingBuy  = pendingBuy  + tonumber(b)
-            pendingSell = pendingSell + tonumber(s)
-            price = tonumber(p)
+            local pd = pending[mkt]
+            if pd then
+                pd.buy  = pd.buy  + tonumber(b)
+                pd.sell = pd.sell + tonumber(s)
+                pd.price = tonumber(p)
+            end
             return true
         end
-        -- individual trades, relayed to every client's UI for the trade feed
-        local side, q, tp, venue = msg:match("^trd:([BS]):([%d%.]+):([%d%.]+):(%u+)$")
-        if side then
+        -- v2 trades, relayed to every client's UI for the trade feed
+        local tmkt, side, q, tp, venue = msg:match("^trd:(%u+):([BS]):([%d%.]+):([%d%.]+):(%u+)$")
+        if tmkt then
             if playerID ~= 0 then return true end
-            nTrades = (nTrades or 0) + 1
-            if DEBUG and nTrades % 20 == 1 then Spring.Echo("MKTWAR-SYNC trd#" .. nTrades) end
-            SendToUnsynced("mkt_trd", side == "B" and 1 or 0, tonumber(q), tonumber(tp), venue)
+            if PAIRS[tmkt] then
+                SendToUnsynced("mkt_trd", side == "B" and 1 or 0, tonumber(q), tonumber(tp), venue, tmkt)
+            end
             return true
         end
     end
@@ -69,44 +85,38 @@ if gadgetHandler:IsSyncedCode() then
 
     function gadget:GameFrame(f)
         if f % 30 ~= 0 then return end          -- once per second (30 sim fps)
-        local bm = surgeMult(BULLS_TEAM)
-        local sm = surgeMult(BEARS_TEAM)
-        smoothBuy  = smoothBuy  + (pendingBuy  - smoothBuy)  * SMOOTH_ALPHA
-        smoothSell = smoothSell + (pendingSell - smoothSell) * SMOOTH_ALPHA
-        local m0 = (BASELINE_METAL  + smoothBuy  * METAL_PER_BTC)  * bm
-        local e0 = (BASELINE_ENERGY + smoothBuy  * ENERGY_PER_BTC) * bm
-        local m1 = (BASELINE_METAL  + smoothSell * METAL_PER_BTC)  * sm
-        local e1 = (BASELINE_ENERGY + smoothSell * ENERGY_PER_BTC) * sm
-        Spring.AddTeamResource(BULLS_TEAM, "metal",  m0)
-        Spring.AddTeamResource(BULLS_TEAM, "energy", e0)
-        Spring.AddTeamResource(BEARS_TEAM, "metal",  m1)
-        Spring.AddTeamResource(BEARS_TEAM, "energy", e1)
-        -- publish for spectator HUD widgets (synced -> unsynced on every client)
-        Spring.SetGameRulesParam("mkt_price", price)
-        Spring.SetGameRulesParam("mkt_buy",   pendingBuy)
-        Spring.SetGameRulesParam("mkt_sell",  pendingSell)
-        Spring.SetGameRulesParam("mkt_m0", m0)
-        Spring.SetGameRulesParam("mkt_e0", e0)
-        Spring.SetGameRulesParam("mkt_m1", m1)
-        Spring.SetGameRulesParam("mkt_e1", e1)
-        Spring.SetGameRulesParam("mkt_surge0", bm)
-        Spring.SetGameRulesParam("mkt_surge1", sm)
-        GG.MarketWar.buyRate, GG.MarketWar.sellRate, GG.MarketWar.price = pendingBuy, pendingSell, price
-        pendingBuy, pendingSell = 0, 0
+        for mkt, pr in pairs(PAIRS) do
+            local pd, sm = pending[mkt], smooth[mkt]
+            sm.buy  = sm.buy  + (pd.buy  - sm.buy)  * SMOOTH_ALPHA
+            sm.sell = sm.sell + (pd.sell - sm.sell) * SMOOTH_ALPHA
+            local am = (BASELINE_METAL  + sm.buy  * pr.m) * surgeMult(pr.asset)
+            local ae = (BASELINE_ENERGY + sm.buy  * pr.e) * surgeMult(pr.asset)
+            local um = (BASELINE_METAL  + sm.sell * pr.m) * surgeMult(pr.usd)
+            local ue = (BASELINE_ENERGY + sm.sell * pr.e) * surgeMult(pr.usd)
+            Spring.AddTeamResource(pr.asset, "metal",  am)
+            Spring.AddTeamResource(pr.asset, "energy", ae)
+            Spring.AddTeamResource(pr.usd,   "metal",  um)
+            Spring.AddTeamResource(pr.usd,   "energy", ue)
+            local lk = mkt:lower()
+            Spring.SetGameRulesParam("mkt_price_" .. lk, pd.price)
+            Spring.SetGameRulesParam("mkt_buy_" .. lk,   pd.buy)
+            Spring.SetGameRulesParam("mkt_sell_" .. lk,  pd.sell)
+            Spring.SetGameRulesParam("mkt_m" .. pr.asset, am)
+            Spring.SetGameRulesParam("mkt_e" .. pr.asset, ae)
+            Spring.SetGameRulesParam("mkt_m" .. pr.usd, um)
+            Spring.SetGameRulesParam("mkt_e" .. pr.usd, ue)
+            GG.MarketWar.rates[mkt].buy  = pd.buy
+            GG.MarketWar.rates[mkt].sell = pd.sell
+            GG.MarketWar.price[mkt] = pd.price
+            pd.buy, pd.sell = 0, 0
+        end
     end
 else
     --------------------------------------------------------------- UNSYNCED
     -- Hand relayed trades to the HUD widget (registered global MarketWarTrade).
-    -- The feed->game bridge itself lives in luaui/widgets/market_feed.lua:
-    -- LuaSocket is only exposed to LuaUI, not to unsynced gadgets.
-    local nTrades = 0
-    local function RecvTrade(_, isBuy, qty, tradePrice, venue)
-        nTrades = nTrades + 1
-        if DEBUG and nTrades % 20 == 1 then
-            Spring.Echo("MKTWAR-UNSYNC trd#" .. nTrades .. " luaui=" .. tostring(Script.LuaUI("MarketWarTrade")))
-        end
+    local function RecvTrade(_, isBuy, qty, tradePrice, venue, mkt)
         if Script.LuaUI("MarketWarTrade") then
-            Script.LuaUI.MarketWarTrade(isBuy, qty, tradePrice, venue)
+            Script.LuaUI.MarketWarTrade(isBuy, qty, tradePrice, venue, mkt)
         end
     end
 

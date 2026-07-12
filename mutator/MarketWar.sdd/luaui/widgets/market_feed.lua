@@ -40,7 +40,27 @@ function widget:Initialize()
     Spring.Echo("MarketWar: feed bridge connecting to " .. FEED_HOST .. ":" .. FEED_PORT)
 end
 
+-- AI watchdog: the synced side flags teams whose CircuitAI instance silently
+-- failed (idle solitary commander 60s+); the host issues /aireload for them.
+local lastReload = {}   -- teamID -> os.clock of last reload attempt
+local nextWatch = 0
+
+local function watchdog()
+    local now = os.clock()
+    if now < nextWatch then return end
+    nextWatch = now + 10
+    for teamID = 0, 5 do
+        if (Spring.GetGameRulesParam("mkt_stuck" .. teamID) or 0) == 1
+            and now - (lastReload[teamID] or -math.huge) > 120 then
+            lastReload[teamID] = now
+            Spring.Echo("MKTWAR-WATCHDOG reloading stuck AI on team " .. teamID)
+            Spring.SendCommands("aireload " .. teamID)
+        end
+    end
+end
+
 function widget:Update()
+    watchdog()
     if not client then
         local now = os.clock()
         if now >= retryAt then

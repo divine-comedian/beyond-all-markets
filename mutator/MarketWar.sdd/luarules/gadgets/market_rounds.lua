@@ -1,7 +1,7 @@
 function gadget:GetInfo()
     return {
         name    = "Market Rounds",
-        desc    = "Commander death ends the round: score, wipe, respawn",
+        desc    = "Per-lane rounds: commander death scores and resets only that pair",
         author  = "bar-market-war",
         layer   = 1,
         enabled = true,
@@ -11,33 +11,46 @@ end
 if not gadgetHandler:IsSyncedCode() then return end
 
 -- Tuning (mirror config/war.env)
-local INTERMISSION_FRAMES = 10 * 30   -- ROUND_INTERMISSION_SEC * simfps
+local INTERMISSION_FRAMES = 10 * 30
 local CATACLYSM_DELAY     = 30        -- 1s after the kill before the wipe
 local START_METAL         = 1000
 local START_ENERGY        = 1000
--- CEG names tried at both bases for the nuke visual; unknown names no-op
 local NUKE_CEGS = { "nuclearexplosion", "advanced-nuke", "commander-blast" }
 
-local startPos    = {}                -- teamID -> {x,y,z}
-local isCommander = {}                -- unitDefID -> defName
-local commanderDef = {}               -- teamID -> defName (for respawn)
-local wins        = { [0] = 0, [1] = 0 }
-local round       = 1
-local roundActive = true
-local pendingWipe, pendingSpawn      -- frames
+-- Lane pairs (mirror market_income.lua / gen-startscript.sh)
+local PAIRS = {
+    { key = "btc",  asset = 0, usd = 1 },
+    { key = "spx",  asset = 2, usd = 3 },
+    { key = "gold", asset = 4, usd = 5 },
+}
+local teamPair = {}   -- teamID -> pair
+for _, pr in ipairs(PAIRS) do
+    teamPair[pr.asset], teamPair[pr.usd] = pr, pr
+end
+
+local startPos     = {}   -- teamID -> {x,y,z}
+local isCommander  = {}   -- unitDefID -> defName
+local commanderDef = {}   -- teamID -> defName
 
 function gadget:Initialize()
     GG.MarketWar = GG.MarketWar or {}
-    GG.MarketWar.surge = GG.MarketWar.surge or {}   -- income gadget reads this; rounds never set it
-    GG.MarketWar.roundActive = true
+    GG.MarketWar.surge = GG.MarketWar.surge or {}
+    GG.MarketWar.roundActive = {}   -- pair key -> bool
     for udid, ud in pairs(UnitDefs) do
         if ud.customParams and ud.customParams.iscommander then
             isCommander[udid] = ud.name
         end
     end
-    Spring.SetGameRulesParam("mkt_wins0", 0)
-    Spring.SetGameRulesParam("mkt_wins1", 0)
-    Spring.SetGameRulesParam("mkt_round", round)
+    for _, pr in ipairs(PAIRS) do
+        pr.wins = { [pr.asset] = 0, [pr.usd] = 0 }
+        pr.round = 1
+        pr.active = true
+        GG.MarketWar.roundActive[pr.key] = true
+        Spring.SetGameRulesParam("mkt_wins" .. pr.asset, 0)
+        Spring.SetGameRulesParam("mkt_wins" .. pr.usd, 0)
+        Spring.SetGameRulesParam("mkt_round_" .. pr.key, 1)
+        Spring.SetGameRulesParam("mkt_intermission_" .. pr.key, 0)
+    end
 end
 
 function gadget:GameStart()
@@ -66,7 +79,8 @@ local function nukeVisual(p)
 end
 
 function gadget:UnitDestroyed(unitID, unitDefID, unitTeam)
-    if not roundActive then return end
+    local pr = teamPair[unitTeam]
+    if not pr or not pr.active then return end
     local defName = isCommander[unitDefID]
     if not defName then return end
     for _, uid in ipairs(Spring.GetTeamUnits(unitTeam)) do
@@ -74,59 +88,65 @@ function gadget:UnitDestroyed(unitID, unitDefID, unitTeam)
             return   -- team still has a commander; not a round end
         end
     end
-    local killer = 1 - unitTeam            -- two-team war
-    roundActive = false
-    GG.MarketWar.roundActive = false
-    wins[killer] = wins[killer] + 1
+    -- lane semantics: the pair OPPONENT scores, whoever landed the kill
+    local killer = (unitTeam == pr.asset) and pr.usd or pr.asset
+    pr.active = false
+    GG.MarketWar.roundActive[pr.key] = false
+    pr.wins[killer] = pr.wins[killer] + 1
     local f = Spring.GetGameFrame()
-    pendingWipe  = f + CATACLYSM_DELAY
-    pendingSpawn = f + INTERMISSION_FRAMES
-    Spring.SetGameRulesParam("mkt_wins" .. killer, wins[killer])
-    Spring.SetGameRulesParam("mkt_roundwinner", killer)
-    Spring.SetGameRulesParam("mkt_intermission", pendingSpawn)
-    Spring.Echo(string.format("MKTWAR-ROUND round %d to team %d (score %d-%d)",
-        round, killer, wins[0], wins[1]))
+    pr.pendingWipe  = f + CATACLYSM_DELAY
+    pr.pendingSpawn = f + INTERMISSION_FRAMES
+    Spring.SetGameRulesParam("mkt_wins" .. killer, pr.wins[killer])
+    Spring.SetGameRulesParam("mkt_roundwinner_" .. pr.key, killer)
+    Spring.SetGameRulesParam("mkt_intermission_" .. pr.key, pr.pendingSpawn)
+    Spring.Log("MKTWAR", "info", string.format("ROUND %s: round %d to team %d (%d-%d)",
+        pr.key, pr.round, killer, pr.wins[pr.asset], pr.wins[pr.usd]))
 end
 
-local function wipeField()
-    for teamID, p in pairs(startPos) do nukeVisual(p) end
-    for _, uid in ipairs(Spring.GetAllUnits()) do
-        Spring.DestroyUnit(uid, true, false)   -- selfd=true: death explosions everywhere
+local function wipePair(pr)
+    for _, teamID in ipairs({ pr.asset, pr.usd }) do
+        local p = startPos[teamID]
+        if p then nukeVisual(p) end
+        for _, uid in ipairs(Spring.GetTeamUnits(teamID)) do
+            Spring.DestroyUnit(uid, true, false)
+        end
     end
 end
 
-local function startRound()
-    round = round + 1
-    for teamID, p in pairs(startPos) do
-        local defName = commanderDef[teamID]
-        if defName then
+local function startRound(pr)
+    for _, teamID in ipairs({ pr.asset, pr.usd }) do
+        local p, defName = startPos[teamID], commanderDef[teamID]
+        if p and defName then
             local y = Spring.GetGroundHeight(p.x, p.z)
             local uid = Spring.CreateUnit(defName, p.x, y, p.z, 0, teamID)
             if uid then
                 Spring.SpawnCEG("commanderspawn", p.x, y, p.z)
             else
-                -- blocked (wreck field); nudge and retry once next second
-                pendingSpawn = Spring.GetGameFrame() + 30
+                pr.pendingSpawn = Spring.GetGameFrame() + 30   -- blocked; retry
                 return
             end
         end
         Spring.SetTeamResource(teamID, "m", START_METAL)
         Spring.SetTeamResource(teamID, "e", START_ENERGY)
     end
-    roundActive = true
-    GG.MarketWar.roundActive = true
-    pendingSpawn = nil
-    Spring.SetGameRulesParam("mkt_round", round)
-    Spring.SetGameRulesParam("mkt_intermission", 0)
-    Spring.Echo(string.format("MKTWAR-ROUND round %d begins (score %d-%d)", round, wins[0], wins[1]))
+    pr.round = pr.round + 1
+    pr.active = true
+    GG.MarketWar.roundActive[pr.key] = true
+    pr.pendingSpawn = nil
+    Spring.SetGameRulesParam("mkt_round_" .. pr.key, pr.round)
+    Spring.SetGameRulesParam("mkt_intermission_" .. pr.key, 0)
+    Spring.Log("MKTWAR", "info", string.format("ROUND %s: round %d begins (%d-%d)",
+        pr.key, pr.round, pr.wins[pr.asset], pr.wins[pr.usd]))
 end
 
 function gadget:GameFrame(f)
-    if pendingWipe and f >= pendingWipe then
-        pendingWipe = nil
-        wipeField()
-    end
-    if pendingSpawn and f >= pendingSpawn then
-        startRound()
+    for _, pr in ipairs(PAIRS) do
+        if pr.pendingWipe and f >= pr.pendingWipe then
+            pr.pendingWipe = nil
+            wipePair(pr)
+        end
+        if pr.pendingSpawn and f >= pr.pendingSpawn then
+            startRound(pr)
+        end
     end
 end

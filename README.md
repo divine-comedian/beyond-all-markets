@@ -1,11 +1,12 @@
 # BAR Market War
 
-A never-ending 1v1 Beyond All Reason war driven by the live BTC/USD order flow.
-Every real Binance trade is reinforcements: taker **buys** feed the **Bulls**
-(Armada, team 0) and taker **sells** feed the **Bears** (Cortex, team 1) as
-metal/energy income. Two BARbarian AIs fight it out; when a commander dies it
-respawns 45s later with a temporary income surge, so the front line swings
-forever. `deathmode=neverend` guarantees no game over.
+A never-ending Beyond All Reason war driven by live market order flow, three
+lanes on one map: **BTC/USD** (mid, Binance+Coinbase), **SP500/USD** (north,
+Hyperliquid xyz:SP500) and **GOLD/USD** (south, Hyperliquid xyz:GOLD + PAXG).
+Taker **buys** feed the asset team (Armada), taker **sells** feed its USD
+opponent (Cortex); assets and USDs form two alliance blocks. Six BARbarIAn
+AIs fight; a commander kill scores that lane's round, nukes both its bases,
+and respawns the pair fresh. `deathmode=neverend` guarantees no game over.
 
 ## Quickstart
 
