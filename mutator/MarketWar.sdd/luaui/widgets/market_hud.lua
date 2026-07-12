@@ -48,7 +48,10 @@ local function OnTrade(isBuy, qty, price)
     if #trades > TRADE_ROWS then table.remove(trades) end
 end
 
+local mapCenter
+
 function widget:Initialize()
+    mapCenter = { x = Game.mapSizeX / 2, z = Game.mapSizeZ / 2 }
     if widgetHandler.RegisterGlobal then
         widgetHandler:RegisterGlobal(widget, "MarketWarTrade", OnTrade)
     else
@@ -140,29 +143,34 @@ function widget:DrawScreen()
     local s = vsy / 1080
     local now = os.clock()
 
-    ---------------------------------------------------------------- center price
-    local flash = math.max(0, 1 - (now - tickAt) / 0.8)
-    local base = WHITE
-    local target = tickDir > 0 and UP or DOWN
-    local pc = {
-        base[1] + (target[1] - base[1]) * flash,
-        base[2] + (target[2] - base[2]) * flash,
-        base[3] + (target[3] - base[3]) * flash,
-    }
-    gl.Color(pc[1], pc[2], pc[3], 0.5 + 0.5 * flash)
-    gl.Text(string.format("$%.1f", lastPrice), vsx / 2, vsy / 2 + 40 * s, 72 * s, "co")
-    if pctChange ~= 0 then
-        gl.Color(pc[1], pc[2], pc[3], 0.5 + 0.5 * flash)
-        gl.Text(string.format("%+.3f%%", pctChange), vsx / 2, vsy / 2 + 8 * s, 24 * s, "co")
+    ---------------------------------------------------------------- price at map center
+    -- world-anchored: sits over the middle of the battlefield, not the screen
+    local gy = Spring.GetGroundHeight(mapCenter.x, mapCenter.z) or 0
+    local px, py, pz = Spring.WorldToScreenCoords(mapCenter.x, gy + 500, mapCenter.z)
+    if pz and pz < 1 then
+        local flash = math.max(0, 1 - (now - tickAt) / 0.8)
+        local base = WHITE
+        local target = tickDir > 0 and UP or DOWN
+        local pc = {
+            base[1] + (target[1] - base[1]) * flash,
+            base[2] + (target[2] - base[2]) * flash,
+            base[3] + (target[3] - base[3]) * flash,
+        }
+        gl.Color(pc[1], pc[2], pc[3], 0.55 + 0.45 * flash)
+        gl.Text(string.format("$%.1f", lastPrice), px, py + 40 * s, 72 * s, "co")
+        if pctChange ~= 0 then
+            gl.Color(pc[1], pc[2], pc[3], 0.55 + 0.45 * flash)
+            gl.Text(string.format("%+.3f%%", pctChange), px, py + 8 * s, 24 * s, "co")
+        end
+        -- per-side income summary under the price
+        local surge0, surge1 = getP("mkt_surge0"), getP("mkt_surge1")
+        gl.Color(BTC[1], BTC[2], BTC[3], 0.9)
+        gl.Text(string.format("BTC +%dm +%de%s", getP("mkt_m0"), getP("mkt_e0"),
+            surge0 > 1 and " SURGE" or ""), px - 10 * s, py - 22 * s, 16 * s, "ro")
+        gl.Color(USD[1], USD[2], USD[3], 0.9)
+        gl.Text(string.format("USD +%dm +%de%s", getP("mkt_m1"), getP("mkt_e1"),
+            surge1 > 1 and " SURGE" or ""), px + 10 * s, py - 22 * s, 16 * s, "o")
     end
-    -- per-side income summary under the price
-    gl.Color(BTC[1], BTC[2], BTC[3], 0.9)
-    local surge0, surge1 = getP("mkt_surge0"), getP("mkt_surge1")
-    gl.Text(string.format("BTC +%dm +%de%s", getP("mkt_m0"), getP("mkt_e0"),
-        surge0 > 1 and " SURGE" or ""), vsx / 2 - 10 * s, vsy / 2 - 22 * s, 16 * s, "ro")
-    gl.Color(USD[1], USD[2], USD[3], 0.9)
-    gl.Text(string.format("USD +%dm +%de%s", getP("mkt_m1"), getP("mkt_e1"),
-        surge1 > 1 and " SURGE" or ""), vsx / 2 + 10 * s, vsy / 2 - 22 * s, 16 * s, "o")
 
     ---------------------------------------------------------------- base labels + pulses
     for team = 0, 1 do
