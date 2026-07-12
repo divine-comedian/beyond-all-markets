@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from feedd import bucket_trade, format_line, new_bucket
+from feedd import TradeThrottle, bucket_trade, format_line, format_trade, new_bucket
 
 
 def test_taker_buy_goes_to_buy_volume():
@@ -30,3 +30,28 @@ def test_format_line_empty_bucket_keeps_last_price():
     b = new_bucket()
     b["price"] = 117000.0
     assert format_line(b) == "mkt:0.0000:0.0000:117000.0"
+
+
+def test_format_trade_buy_and_sell():
+    assert format_trade(is_buyer_maker=False, qty=0.5123, price=64000.12) == "trd:B:0.5123:64000.1"
+    assert format_trade(is_buyer_maker=True, qty=0.01, price=64000.0) == "trd:S:0.0100:64000.0"
+
+
+def test_throttle_caps_small_trades_per_second():
+    t = TradeThrottle(per_sec=3, big=0.05)
+    allowed = [t.allow(0.01, now=100.0) for _ in range(5)]
+    assert allowed == [True, True, True, False, False]
+
+
+def test_throttle_always_allows_big_trades():
+    t = TradeThrottle(per_sec=1, big=0.05)
+    assert t.allow(0.01, now=100.0)
+    assert not t.allow(0.01, now=100.5)
+    assert t.allow(0.30, now=100.6)      # big print bypasses the cap
+
+
+def test_throttle_resets_each_second():
+    t = TradeThrottle(per_sec=1, big=0.05)
+    assert t.allow(0.01, now=100.0)
+    assert not t.allow(0.01, now=100.9)
+    assert t.allow(0.01, now=101.0)

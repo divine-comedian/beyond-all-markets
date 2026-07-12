@@ -49,7 +49,8 @@ function widget:Update()
     end
     local data, err = client:receive("*l")
     while data do
-        if data:sub(1, 4) == "mkt:" then
+        local prefix = data:sub(1, 4)
+        if prefix == "mkt:" or prefix == "trd:" then
             Spring.SendLuaRulesMsg(data)
         end
         data, err = client:receive("*l")

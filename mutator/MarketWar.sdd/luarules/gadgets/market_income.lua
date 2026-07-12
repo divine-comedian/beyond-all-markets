@@ -34,12 +34,20 @@ if gadgetHandler:IsSyncedCode() then
 
     function gadget:RecvLuaMsg(msg, playerID)
         local b, s, p = msg:match("^mkt:([%d%.]+):([%d%.]+):([%d%.]+)$")
-        if not b then return end
-        if playerID ~= 0 then return true end   -- only the hosting player feeds
-        pendingBuy  = pendingBuy  + tonumber(b)
-        pendingSell = pendingSell + tonumber(s)
-        price = tonumber(p)
-        return true
+        if b then
+            if playerID ~= 0 then return true end   -- only the hosting player feeds
+            pendingBuy  = pendingBuy  + tonumber(b)
+            pendingSell = pendingSell + tonumber(s)
+            price = tonumber(p)
+            return true
+        end
+        -- individual trades, relayed to every client's UI for the trade feed
+        local side, q, tp = msg:match("^trd:([BS]):([%d%.]+):([%d%.]+)$")
+        if side then
+            if playerID ~= 0 then return true end
+            SendToUnsynced("mkt_trd", side == "B" and 1 or 0, tonumber(q), tonumber(tp))
+            return true
+        end
     end
 
     local function surgeMult(teamID)
@@ -73,6 +81,22 @@ if gadgetHandler:IsSyncedCode() then
         GG.MarketWar.buyRate, GG.MarketWar.sellRate, GG.MarketWar.price = pendingBuy, pendingSell, price
         pendingBuy, pendingSell = 0, 0
     end
+else
+    --------------------------------------------------------------- UNSYNCED
+    -- Hand relayed trades to the HUD widget (registered global MarketWarTrade).
+    -- The feed->game bridge itself lives in luaui/widgets/market_feed.lua:
+    -- LuaSocket is only exposed to LuaUI, not to unsynced gadgets.
+    local function RecvTrade(_, isBuy, qty, tradePrice)
+        if Script.LuaUI("MarketWarTrade") then
+            Script.LuaUI.MarketWarTrade(isBuy, qty, tradePrice)
+        end
+    end
+
+    function gadget:Initialize()
+        gadgetHandler:AddSyncAction("mkt_trd", RecvTrade)
+    end
+
+    function gadget:Shutdown()
+        gadgetHandler:RemoveSyncAction("mkt_trd")
+    end
 end
--- (The feed->game bridge lives in luaui/widgets/market_feed.lua: LuaSocket is
--- only exposed to LuaUI, not to unsynced gadgets.)

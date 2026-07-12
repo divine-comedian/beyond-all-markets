@@ -1,7 +1,7 @@
 function widget:GetInfo()
     return {
         name    = "Market War HUD",
-        desc    = "Live BTC/USD price, trade tape, and per-side income overlay",
+        desc    = "Center price, base labels, income pulses, live trade feed",
         author  = "bar-market-war",
         date    = "2026",
         license = "MIT",
@@ -10,28 +10,30 @@ function widget:GetInfo()
     }
 end
 
--- Colors (match team RgbColor in the start script)
-local BTC = { 0.97, 0.58, 0.10 }
-local USD = { 0.30, 0.69, 0.31 }
-local WHITE = { 1, 1, 1 }
-local DIM   = { 0.75, 0.75, 0.75 }
+-- Team identity (match the start script)
+local BTC = { 0.97, 0.58, 0.10 }      -- team 0, fed by taker buys
+local USD = { 0.30, 0.69, 0.31 }      -- team 1, fed by taker sells
+local UP  = { 0.20, 0.90, 0.30 }      -- price up flash
+local DOWN = { 0.95, 0.20, 0.20 }     -- price down flash
+local WHITE = { 0.95, 0.95, 0.95 }
+local TEAMNAME = { [0] = "BTC", [1] = "USD" }
+local TEAMCOL  = { [0] = BTC, [1] = USD }
 
-local TAPE_LEN  = 90        -- seconds of history in the tape
-local VOL_CAP   = 5         -- BTC/s that fills a full bar (log-scaled)
+local VOL_CAP    = 5                  -- BTC/s for a full-scale pulse
+local PULSE_LIFE = 2.2
+local FLASH_LIFE = 3.0
+local TRADE_ROWS = 14
 
-local tape = {}             -- ring of {buy, sell}
 local lastPrice, prevPrice = 0, 0
+local pctChange = 0
+local tickDir, tickAt = 0, -10       -- +1/-1, os.clock of last price change
 local lastSampledFrame = -1
 
-local isCommander = {}      -- unitDefID -> true
-local commanders  = {}      -- teamID -> unitID
-local pulses      = {}      -- {team, metal, vol, born (os.clock)}
-local prevLiq     = { [0] = 0, [1] = 0 }
-local liqFlash    = { [0] = 0, [1] = 0 }   -- os.clock of the death moment
-local PULSE_LIFE  = 1.6
-local FLASH_LIFE  = 3.0
-local TEAMNAME    = { [0] = "BTC", [1] = "USD" }
-local TEAMCOL     -- set below after color tables
+local basePos    = {}                -- teamID -> {x,y,z} (fixed start positions)
+local pulses     = {}                -- {team, metal, energy, vol, born}
+local trades     = {}                -- newest-first {isBuy, qty, price}
+local prevLiq    = { [0] = 0, [1] = 0 }
+local liqFlash   = { [0] = 0, [1] = 0 }
 
 local function getP(name)
     return Spring.GetGameRulesParam(name) or 0
@@ -41,26 +43,33 @@ local function logScale(v)
     return math.min(1, math.log(1 + v) / math.log(1 + VOL_CAP))
 end
 
+local function OnTrade(isBuy, qty, price)
+    table.insert(trades, 1, { isBuy = isBuy == 1, qty = qty, price = price })
+    if #trades > TRADE_ROWS then table.remove(trades) end
+end
+
 function widget:Initialize()
-    TEAMCOL = { [0] = BTC, [1] = USD }
-    for udid, ud in pairs(UnitDefs) do
-        if ud.customParams and ud.customParams.iscommander then
-            isCommander[udid] = true
-        end
+    if widgetHandler.RegisterGlobal then
+        widgetHandler:RegisterGlobal(widget, "MarketWarTrade", OnTrade)
+    else
+        MarketWarTrade = OnTrade
+    end
+    -- force team colors on this client; BAR's auto-color otherwise repaints
+    Spring.SetTeamColor(0, BTC[1], BTC[2], BTC[3])
+    Spring.SetTeamColor(1, USD[1], USD[2], USD[3])
+end
+
+function widget:Shutdown()
+    if widgetHandler.DeregisterGlobal then
+        widgetHandler:DeregisterGlobal(widget, "MarketWarTrade")
     end
 end
 
-local function refreshCommanders()
+local function refreshBases()
     for team = 0, 1 do
-        local uid = commanders[team]
-        if not (uid and Spring.ValidUnitID(uid) and not Spring.GetUnitIsDead(uid)) then
-            commanders[team] = nil
-            for _, u in ipairs(Spring.GetTeamUnits(team)) do
-                if isCommander[Spring.GetUnitDefID(u)] then
-                    commanders[team] = u
-                    break
-                end
-            end
+        if not basePos[team] then
+            local x, y, z = Spring.GetTeamStartPosition(team)
+            if x and x > 0 then basePos[team] = { x = x, y = y, z = z } end
         end
     end
 end
@@ -70,21 +79,30 @@ function widget:GameFrame(f)
     lastSampledFrame = f
     prevPrice = lastPrice
     lastPrice = getP("mkt_price")
-    local buy, sell = getP("mkt_buy"), getP("mkt_sell")
-    tape[#tape + 1] = { buy = buy, sell = sell }
-    if #tape > TAPE_LEN then table.remove(tape, 1) end
+    if prevPrice > 0 and lastPrice ~= prevPrice then
+        pctChange = (lastPrice - prevPrice) / prevPrice * 100
+        tickDir = lastPrice > prevPrice and 1 or -1
+        tickAt = os.clock()
+    else
+        pctChange = 0
+    end
 
-    refreshCommanders()
+    refreshBases()
+    -- re-assert colors periodically in case BAR's color logic repaints
+    if f % 300 == 0 then
+        Spring.SetTeamColor(0, BTC[1], BTC[2], BTC[3])
+        Spring.SetTeamColor(1, USD[1], USD[2], USD[3])
+    end
+
     local now = os.clock()
-    pulses[#pulses + 1] = { team = 0, metal = getP("mkt_m0"), vol = buy,  born = now }
-    pulses[#pulses + 1] = { team = 1, metal = getP("mkt_m1"), vol = sell, born = now }
+    pulses[#pulses + 1] = { team = 0, metal = getP("mkt_m0"), energy = getP("mkt_e0"),
+                            vol = getP("mkt_buy"), born = now }
+    pulses[#pulses + 1] = { team = 1, metal = getP("mkt_m1"), energy = getP("mkt_e1"),
+                            vol = getP("mkt_sell"), born = now }
 
-    -- liquidation edge detection
     for team = 0, 1 do
         local liq = getP("mkt_liq" .. team)
-        if liq > 0 and prevLiq[team] == 0 then
-            liqFlash[team] = now
-        end
+        if liq > 0 and prevLiq[team] == 0 then liqFlash[team] = now end
         prevLiq[team] = liq
     end
 end
@@ -97,116 +115,116 @@ function widget:DrawWorld()
         if age > PULSE_LIFE then
             table.remove(pulses, i)
         else
-            local uid = commanders[p.team]
-            if uid and Spring.ValidUnitID(uid) then
-                local x, y, z = Spring.GetUnitPosition(uid)
-                if x then
-                    local c = TEAMCOL[p.team]
-                    local grow = age / PULSE_LIFE
-                    local radius = (40 + 220 * logScale(p.vol)) * (0.3 + 0.7 * grow)
-                    gl.Color(c[1], c[2], c[3], 0.65 * (1 - grow))
-                    gl.LineWidth(2.5)
-                    gl.DrawGroundCircle(x, y, z, radius, 32)
-                    gl.LineWidth(1.0)
-                end
+            local bp = basePos[p.team]
+            if bp then
+                local c = TEAMCOL[p.team]
+                local grow = age / PULSE_LIFE
+                local radius = (60 + 320 * logScale(p.vol)) * (0.3 + 0.7 * grow)
+                gl.Color(c[1], c[2], c[3], 0.7 * (1 - grow))
+                gl.LineWidth(4.0)
+                gl.DrawGroundCircle(bp.x, bp.y, bp.z, radius, 40)
+                gl.LineWidth(1.0)
             end
         end
     end
 end
 
-local function text(str, x, y, size, color, opts)
-    gl.Color(color[1], color[2], color[3], 1)
-    gl.Text(str, x, y, size, opts or "o")
+local function screenPos(bp, dy)
+    local sx, sy, sz = Spring.WorldToScreenCoords(bp.x, bp.y + (dy or 0), bp.z)
+    if sz and sz < 1 then return sx, sy end
+    return nil
 end
 
 function widget:DrawScreen()
     local vsx, vsy = Spring.GetViewGeometry()
-    local s = vsy / 1080                     -- scale with resolution
-    local W, H = 560 * s, 150 * s
-    local x0 = (vsx - W) / 2
-    local y0 = vsy - H - 8 * s
-
-    -- panel
-    gl.Color(0, 0, 0, 0.55)
-    gl.Rect(x0, y0, x0 + W, y0 + H)
-
-    -- price, colored by direction
-    local price = lastPrice
-    local pcol = WHITE
-    if price > prevPrice then pcol = BTC
-    elseif price < prevPrice then pcol = USD end
-    text(string.format("BTC/USD  $%.1f", price), x0 + W / 2, y0 + H - 30 * s, 26 * s, pcol, "co")
-
-    -- trade tape: buys up (orange), sells down (green) around a midline
-    local tapeH  = 44 * s
-    local midY   = y0 + 62 * s
-    local colW   = (W - 24 * s) / TAPE_LEN
-    gl.Color(1, 1, 1, 0.15)
-    gl.Rect(x0 + 12 * s, midY - 0.5, x0 + W - 12 * s, midY + 0.5)
-    for i, t in ipairs(tape) do
-        local cx = x0 + 12 * s + (i - 1) * colW
-        local bh = logScale(t.buy)  * tapeH
-        local sh = logScale(t.sell) * tapeH
-        if bh > 0.5 then
-            gl.Color(BTC[1], BTC[2], BTC[3], 0.9)
-            gl.Rect(cx, midY, cx + colW - 1, midY + bh)
-        end
-        if sh > 0.5 then
-            gl.Color(USD[1], USD[2], USD[3], 0.9)
-            gl.Rect(cx, midY - sh, cx + colW - 1, midY)
-        end
-    end
-
-    -- per-side income readouts
-    local m0, e0 = getP("mkt_m0"), getP("mkt_e0")
-    local m1, e1 = getP("mkt_m1"), getP("mkt_e1")
-    local buy, sell = getP("mkt_buy"), getP("mkt_sell")
-    local surge0, surge1 = getP("mkt_surge0"), getP("mkt_surge1")
-
-    local yInfo = y0 + 8 * s
-    text(string.format("BTC  buy %.3f  +%dm +%de%s", buy, m0, e0,
-        surge0 > 1 and ("  SURGE x" .. surge0) or ""),
-        x0 + 14 * s, yInfo, 15 * s, BTC, "o")
-    text(string.format("%ssell %.3f  +%dm +%de  USD", surge1 > 1 and ("x" .. surge1 .. " SURGE  ") or "",
-        sell, m1, e1),
-        x0 + W - 14 * s, yInfo, 15 * s, USD, "ro")
-
-    -- rising income text above each commander
+    local s = vsy / 1080
     local now = os.clock()
-    for _, p in ipairs(pulses) do
-        local uid = commanders[p.team]
-        if uid and Spring.ValidUnitID(uid) and p.metal >= 1 then
-            local wx, wy, wz = Spring.GetUnitPosition(uid)
-            if wx then
-                local sx, sy, sz = Spring.WorldToScreenCoords(wx, wy + 60, wz)
-                if sz and sz < 1 then    -- in front of the camera
-                    local age = (now - p.born) / PULSE_LIFE
-                    local c = TEAMCOL[p.team]
-                    gl.Color(c[1], c[2], c[3], 1 - age)
-                    local size = (13 + 14 * logScale(p.vol)) * s
-                    gl.Text(string.format("+%dm", p.metal), sx, sy + 45 * s * age, size, "co")
-                end
+
+    ---------------------------------------------------------------- center price
+    local flash = math.max(0, 1 - (now - tickAt) / 0.8)
+    local base = WHITE
+    local target = tickDir > 0 and UP or DOWN
+    local pc = {
+        base[1] + (target[1] - base[1]) * flash,
+        base[2] + (target[2] - base[2]) * flash,
+        base[3] + (target[3] - base[3]) * flash,
+    }
+    gl.Color(pc[1], pc[2], pc[3], 0.5 + 0.5 * flash)
+    gl.Text(string.format("$%.1f", lastPrice), vsx / 2, vsy / 2 + 40 * s, 72 * s, "co")
+    if pctChange ~= 0 then
+        gl.Color(pc[1], pc[2], pc[3], 0.5 + 0.5 * flash)
+        gl.Text(string.format("%+.3f%%", pctChange), vsx / 2, vsy / 2 + 8 * s, 24 * s, "co")
+    end
+    -- per-side income summary under the price
+    gl.Color(BTC[1], BTC[2], BTC[3], 0.9)
+    local surge0, surge1 = getP("mkt_surge0"), getP("mkt_surge1")
+    gl.Text(string.format("BTC +%dm +%de%s", getP("mkt_m0"), getP("mkt_e0"),
+        surge0 > 1 and " SURGE" or ""), vsx / 2 - 10 * s, vsy / 2 - 22 * s, 16 * s, "ro")
+    gl.Color(USD[1], USD[2], USD[3], 0.9)
+    gl.Text(string.format("USD +%dm +%de%s", getP("mkt_m1"), getP("mkt_e1"),
+        surge1 > 1 and " SURGE" or ""), vsx / 2 + 10 * s, vsy / 2 - 22 * s, 16 * s, "o")
+
+    ---------------------------------------------------------------- base labels + pulses
+    for team = 0, 1 do
+        local bp = basePos[team]
+        if bp then
+            local sx, sy = screenPos(bp, 120)
+            if sx then
+                local c = TEAMCOL[team]
+                gl.Color(c[1], c[2], c[3], 1)
+                gl.Text(TEAMNAME[team], sx, sy, 40 * s, "co")
             end
         end
     end
 
-    -- liquidation banner: flash on death, then respawn countdown
+    for _, p in ipairs(pulses) do
+        local bp = basePos[p.team]
+        if bp and p.metal >= 1 then
+            local sx, sy = screenPos(bp, 60)
+            if sx then
+                local age = (now - p.born) / PULSE_LIFE
+                local c = TEAMCOL[p.team]
+                gl.Color(c[1], c[2], c[3], 1 - age)
+                local size = (36 + 30 * logScale(p.vol)) * s
+                local pct = ""
+                if pctChange ~= 0 then pct = string.format("%+.2f%%  ", pctChange) end
+                gl.Text(string.format("%s+%d metal  +%d energy", pct, p.metal, p.energy),
+                    sx, sy + 70 * s * age, size, "co")
+            end
+        end
+    end
+
+    ---------------------------------------------------------------- trade feed (right, 3/4 up)
+    local tw, rh = 250 * s, 19 * s
+    local tx = vsx - tw - 12 * s
+    local ty = vsy * 0.75
+    gl.Color(0, 0, 0, 0.45)
+    gl.Rect(tx - 8 * s, ty - TRADE_ROWS * rh - 8 * s, tx + tw, ty + 26 * s)
+    gl.Color(1, 1, 1, 0.9)
+    gl.Text("LIVE TRADES  BTC/USDT", tx, ty + 8 * s, 14 * s, "o")
+    for i, t in ipairs(trades) do
+        local c = t.isBuy and BTC or USD
+        local alpha = 1 - (i - 1) / TRADE_ROWS * 0.7
+        gl.Color(c[1], c[2], c[3], alpha)
+        gl.Text(string.format("%s  %8.4f  @ %.1f", t.isBuy and "BUY " or "SELL", t.qty, t.price),
+            tx, ty - i * rh, 15 * s, "o")
+    end
+
+    ---------------------------------------------------------------- liquidation banner
     local frame = Spring.GetGameFrame()
-    local by = vsy * 0.72
+    local by = vsy * 0.70
     for team = 0, 1 do
         local liq = getP("mkt_liq" .. team)
         if liq > frame then
             local c = TEAMCOL[team]
-            local flashAge = now - liqFlash[team]
-            if flashAge < FLASH_LIFE then
-                local a = 0.5 + 0.5 * math.abs(math.sin(now * 6))
-                gl.Color(c[1], c[2], c[3], a)
+            if now - liqFlash[team] < FLASH_LIFE then
+                gl.Color(c[1], c[2], c[3], 0.5 + 0.5 * math.abs(math.sin(now * 6)))
                 gl.Text(TEAMNAME[team] .. " COMMANDER LIQUIDATED", vsx / 2, by, 42 * s, "co")
             end
             local secs = math.ceil((liq - frame) / 30)
             gl.Color(c[1], c[2], c[3], 0.9)
             gl.Text(TEAMNAME[team] .. " reinforcements in " .. secs .. "s", vsx / 2, by - 34 * s, 20 * s, "co")
-            by = by - 64 * s
+            by = by - 70 * s
         end
     end
 end
