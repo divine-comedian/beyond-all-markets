@@ -51,11 +51,11 @@ if defined BARDATA (
   rem try delta-fetch into the existing pool; Program Files may deny writes
   engine\\pr-downloader.exe --filesystem-writepath "%BARDATA%" --download-game "$GAME_NAME" --download-map "$MAP_NAME"
   if errorlevel 1 (
-    echo Existing install not writable - downloading into the pack instead (full download)...
+    echo Existing install not writable - downloading into the pack instead...
     engine\\pr-downloader.exe --filesystem-writepath "%~dp0data" --download-game "$GAME_NAME" --download-map "$MAP_NAME"
   )
 ) else if not exist "data\\packages" (
-  echo No BAR install found - downloading game data (~2GB, one time)...
+  echo No BAR install found - downloading game data, about 2GB, one time...
   engine\\pr-downloader.exe --filesystem-writepath "%~dp0data" --download-game "$GAME_NAME" --download-map "$MAP_NAME"
 )
 
