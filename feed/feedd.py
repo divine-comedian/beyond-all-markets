@@ -10,7 +10,18 @@ import json
 import math
 import random
 
-WS_URL = "wss://stream.binance.com:9443/ws/btcusdt@aggTrade"
+BINANCE_TRADES = "wss://stream.binance.com:9443/ws/btcusdt@aggTrade"
+BINANCE_BOOK = "wss://stream.binance.com:9443/ws/btcusdt@bookTicker"
+COINBASE_WS = "wss://ws-feed.exchange.coinbase.com"
+
+
+def coinbase_is_buyer_maker(side):
+    # Coinbase 'side' is the maker order side: maker sell => taker bought
+    return side == "buy"
+
+
+def mid_price(bid, ask):
+    return (bid + ask) / 2
 
 
 def new_bucket():
@@ -26,12 +37,12 @@ def bucket_trade(bucket, is_buyer_maker, qty, price):
 
 
 def format_line(bucket):
-    return f"mkt:{bucket['buy']:.4f}:{bucket['sell']:.4f}:{bucket['price']:.1f}"
+    return f"mkt:{bucket['buy']:.4f}:{bucket['sell']:.4f}:{bucket['price']:.2f}"
 
 
 def format_trade(is_buyer_maker, qty, price):
     side = "S" if is_buyer_maker else "B"
-    return f"trd:{side}:{qty:.4f}:{price:.1f}"
+    return f"trd:{side}:{qty:.4f}:{price:.2f}"
 
 
 class TradeThrottle:
@@ -78,28 +89,76 @@ class Broadcaster:
         self.clients -= dead
 
 
-async def binance_trades(bucket, bc):
-    import time
-    import websockets
-    throttle = TradeThrottle()
+async def _reconnecting(name, coro):
     while True:
         try:
-            async with websockets.connect(WS_URL, ping_interval=20) as ws:
-                print("binance stream connected", flush=True)
-                async for raw in ws:
-                    t = json.loads(raw)
-                    m, q, p = t["m"], float(t["q"]), float(t["p"])
-                    bucket_trade(bucket, m, q, p)
-                    if throttle.allow(q, time.time()):
-                        bc.send(format_trade(m, q, p))
+            await coro()
         except Exception as e:
-            print(f"ws reconnect: {e}", flush=True)
+            print(f"{name} reconnect: {e}", flush=True)
             await asyncio.sleep(3)
 
 
-async def synthetic_trades(bucket, bc):
+async def binance_trades(bucket, bc, throttle):
     import time
-    throttle = TradeThrottle()
+    import websockets
+
+    async def run():
+        async with websockets.connect(BINANCE_TRADES, ping_interval=20) as ws:
+            print("binance trade stream connected", flush=True)
+            async for raw in ws:
+                t = json.loads(raw)
+                m, q, p = t["m"], float(t["q"]), float(t["p"])
+                bucket_trade(bucket, m, q, p)
+                if throttle.allow(q, time.time()):
+                    bc.send(format_trade(m, q, p))
+
+    await _reconnecting("binance-trades", run)
+
+
+async def binance_book(bucket):
+    import websockets
+
+    async def run():
+        async with websockets.connect(BINANCE_BOOK, ping_interval=20) as ws:
+            print("binance book stream connected", flush=True)
+            async for raw in ws:
+                t = json.loads(raw)
+                # continuous mid-price so tradeless seconds still tick
+                bucket["price"] = mid_price(float(t["b"]), float(t["a"]))
+
+    await _reconnecting("binance-book", run)
+
+
+async def coinbase_trades(bucket, bc, throttle):
+    import time
+    import websockets
+
+    async def run():
+        async with websockets.connect(COINBASE_WS, ping_interval=20) as ws:
+            await ws.send(json.dumps({
+                "type": "subscribe",
+                "product_ids": ["BTC-USD"],
+                "channels": ["matches"],
+            }))
+            print("coinbase match stream connected", flush=True)
+            async for raw in ws:
+                t = json.loads(raw)
+                if t.get("type") not in ("match", "last_match"):
+                    continue
+                m = coinbase_is_buyer_maker(t["side"])
+                q, p = float(t["size"]), float(t["price"])
+                px0 = bucket["price"]
+                bucket_trade(bucket, m, q, p)
+                if px0:
+                    bucket["price"] = px0   # binance_book owns price continuity
+                if throttle.allow(q, time.time()):
+                    bc.send(format_trade(m, q, p))
+
+    await _reconnecting("coinbase-trades", run)
+
+
+async def synthetic_trades(bucket, bc, throttle):
+    import time
     price = 117000.0
     while True:
         price *= math.exp(random.gauss(0, 0.0002))
@@ -120,7 +179,13 @@ async def main():
     bucket = new_bucket()
     bc = Broadcaster()
     await asyncio.start_server(bc.handle, "127.0.0.1", args.port)
-    asyncio.create_task(synthetic_trades(bucket, bc) if args.synthetic else binance_trades(bucket, bc))
+    throttle = TradeThrottle()
+    if args.synthetic:
+        asyncio.create_task(synthetic_trades(bucket, bc, throttle))
+    else:
+        asyncio.create_task(binance_trades(bucket, bc, throttle))
+        asyncio.create_task(coinbase_trades(bucket, bc, throttle))
+        asyncio.create_task(binance_book(bucket))
     print(f"feedd on 127.0.0.1:{args.port} synthetic={args.synthetic}", flush=True)
     while True:
         await asyncio.sleep(1)
