@@ -14,5 +14,10 @@ function gadget:GameFrame(f)
     if f % 300 ~= 0 then return end
     local units0 = #Spring.GetTeamUnits(0)
     local units1 = #Spring.GetTeamUnits(1)
-    Spring.Echo(string.format("MKTWAR f=%d bulls_units=%d bears_units=%d", f, units0, units1))
+    local m0 = Spring.GetTeamResources(0, "metal")
+    local m1 = Spring.GetTeamResources(1, "metal")
+    local mw = GG.MarketWar or {}
+    Spring.Echo(string.format(
+        "MKTWAR f=%d bulls_units=%d bears_units=%d bulls_metal=%.0f bears_metal=%.0f buy=%.4f sell=%.4f px=%.1f",
+        f, units0, units1, m0 or 0, m1 or 0, mw.buyRate or 0, mw.sellRate or 0, mw.price or 0))
 end
