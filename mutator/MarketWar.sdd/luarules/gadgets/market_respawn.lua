@@ -65,6 +65,7 @@ function gadget:UnitDestroyed(unitID, unitDefID, unitTeam)
     local f = Spring.GetGameFrame()
     respawnQueue[#respawnQueue + 1] = { frame = f + RESPAWN_FRAMES, teamID = unitTeam, defName = defName }
     GG.MarketWar.surge[unitTeam] = { untilFrame = f + RESPAWN_FRAMES + SURGE_FRAMES, mult = SURGE_MULT }
+    Spring.SetGameRulesParam("mkt_liq" .. unitTeam, f + RESPAWN_FRAMES)   -- HUD: liquidation banner + countdown
     Spring.Echo(string.format("MKTWAR: commander down (team %d) — respawn in %ds with %dx surge",
         unitTeam, RESPAWN_FRAMES / 30, SURGE_MULT))
 end
@@ -81,6 +82,7 @@ function gadget:GameFrame(f)
                 local uid = Spring.CreateUnit(r.defName, p.x, y, p.z, 0, r.teamID)
                 if uid then
                     Spring.SpawnCEG("commanderspawn", p.x, y, p.z)
+                    Spring.SetGameRulesParam("mkt_liq" .. r.teamID, 0)
                     Spring.Echo(string.format("MKTWAR: commander respawned (team %d) at %.0f,%.0f", r.teamID, p.x, p.z))
                     table.remove(respawnQueue, i)
                 else

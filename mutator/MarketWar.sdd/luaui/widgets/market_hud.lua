@@ -23,6 +23,16 @@ local tape = {}             -- ring of {buy, sell}
 local lastPrice, prevPrice = 0, 0
 local lastSampledFrame = -1
 
+local isCommander = {}      -- unitDefID -> true
+local commanders  = {}      -- teamID -> unitID
+local pulses      = {}      -- {team, metal, vol, born (os.clock)}
+local prevLiq     = { [0] = 0, [1] = 0 }
+local liqFlash    = { [0] = 0, [1] = 0 }   -- os.clock of the death moment
+local PULSE_LIFE  = 1.6
+local FLASH_LIFE  = 3.0
+local TEAMNAME    = { [0] = "BTC", [1] = "USD" }
+local TEAMCOL     -- set below after color tables
+
 local function getP(name)
     return Spring.GetGameRulesParam(name) or 0
 end
@@ -31,13 +41,77 @@ local function logScale(v)
     return math.min(1, math.log(1 + v) / math.log(1 + VOL_CAP))
 end
 
+function widget:Initialize()
+    TEAMCOL = { [0] = BTC, [1] = USD }
+    for udid, ud in pairs(UnitDefs) do
+        if ud.customParams and ud.customParams.iscommander then
+            isCommander[udid] = true
+        end
+    end
+end
+
+local function refreshCommanders()
+    for team = 0, 1 do
+        local uid = commanders[team]
+        if not (uid and Spring.ValidUnitID(uid) and not Spring.GetUnitIsDead(uid)) then
+            commanders[team] = nil
+            for _, u in ipairs(Spring.GetTeamUnits(team)) do
+                if isCommander[Spring.GetUnitDefID(u)] then
+                    commanders[team] = u
+                    break
+                end
+            end
+        end
+    end
+end
+
 function widget:GameFrame(f)
     if f % 30 ~= 0 or f == lastSampledFrame then return end
     lastSampledFrame = f
     prevPrice = lastPrice
     lastPrice = getP("mkt_price")
-    tape[#tape + 1] = { buy = getP("mkt_buy"), sell = getP("mkt_sell") }
+    local buy, sell = getP("mkt_buy"), getP("mkt_sell")
+    tape[#tape + 1] = { buy = buy, sell = sell }
     if #tape > TAPE_LEN then table.remove(tape, 1) end
+
+    refreshCommanders()
+    local now = os.clock()
+    pulses[#pulses + 1] = { team = 0, metal = getP("mkt_m0"), vol = buy,  born = now }
+    pulses[#pulses + 1] = { team = 1, metal = getP("mkt_m1"), vol = sell, born = now }
+
+    -- liquidation edge detection
+    for team = 0, 1 do
+        local liq = getP("mkt_liq" .. team)
+        if liq > 0 and prevLiq[team] == 0 then
+            liqFlash[team] = now
+        end
+        prevLiq[team] = liq
+    end
+end
+
+function widget:DrawWorld()
+    local now = os.clock()
+    for i = #pulses, 1, -1 do
+        local p = pulses[i]
+        local age = now - p.born
+        if age > PULSE_LIFE then
+            table.remove(pulses, i)
+        else
+            local uid = commanders[p.team]
+            if uid and Spring.ValidUnitID(uid) then
+                local x, y, z = Spring.GetUnitPosition(uid)
+                if x then
+                    local c = TEAMCOL[p.team]
+                    local grow = age / PULSE_LIFE
+                    local radius = (40 + 220 * logScale(p.vol)) * (0.3 + 0.7 * grow)
+                    gl.Color(c[1], c[2], c[3], 0.65 * (1 - grow))
+                    gl.LineWidth(2.5)
+                    gl.DrawGroundCircle(x, y, z, radius, 32)
+                    gl.LineWidth(1.0)
+                end
+            end
+        end
+    end
 end
 
 local function text(str, x, y, size, color, opts)
@@ -96,4 +170,43 @@ function widget:DrawScreen()
     text(string.format("%ssell %.3f  +%dm +%de  USD", surge1 > 1 and ("x" .. surge1 .. " SURGE  ") or "",
         sell, m1, e1),
         x0 + W - 14 * s, yInfo, 15 * s, USD, "ro")
+
+    -- rising income text above each commander
+    local now = os.clock()
+    for _, p in ipairs(pulses) do
+        local uid = commanders[p.team]
+        if uid and Spring.ValidUnitID(uid) and p.metal >= 1 then
+            local wx, wy, wz = Spring.GetUnitPosition(uid)
+            if wx then
+                local sx, sy, sz = Spring.WorldToScreenCoords(wx, wy + 60, wz)
+                if sz and sz < 1 then    -- in front of the camera
+                    local age = (now - p.born) / PULSE_LIFE
+                    local c = TEAMCOL[p.team]
+                    gl.Color(c[1], c[2], c[3], 1 - age)
+                    local size = (13 + 14 * logScale(p.vol)) * s
+                    gl.Text(string.format("+%dm", p.metal), sx, sy + 45 * s * age, size, "co")
+                end
+            end
+        end
+    end
+
+    -- liquidation banner: flash on death, then respawn countdown
+    local frame = Spring.GetGameFrame()
+    local by = vsy * 0.72
+    for team = 0, 1 do
+        local liq = getP("mkt_liq" .. team)
+        if liq > frame then
+            local c = TEAMCOL[team]
+            local flashAge = now - liqFlash[team]
+            if flashAge < FLASH_LIFE then
+                local a = 0.5 + 0.5 * math.abs(math.sin(now * 6))
+                gl.Color(c[1], c[2], c[3], a)
+                gl.Text(TEAMNAME[team] .. " COMMANDER LIQUIDATED", vsx / 2, by, 42 * s, "co")
+            end
+            local secs = math.ceil((liq - frame) / 30)
+            gl.Color(c[1], c[2], c[3], 0.9)
+            gl.Text(TEAMNAME[team] .. " reinforcements in " .. secs .. "s", vsx / 2, by - 34 * s, 20 * s, "co")
+            by = by - 64 * s
+        end
+    end
 end
