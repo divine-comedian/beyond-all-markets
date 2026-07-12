@@ -23,11 +23,13 @@ local WHALE_MAX         = 24
 local WHALE_COOLDOWN_SEC = 30         -- per side
 
 -- Lane pairs; whale = 1s volume bucket that triggers a deploy, in the
--- market's native unit, notional-matched (~$32k): 0.5 BTC ~ 8 oz ~ 4 SPX.
+-- market's native unit. Flank markets trade chunkier (fewer, bigger prints —
+-- measured ~28/min SPX, ~14/min GOLD), so their bars are set lower (~$15k)
+-- than BTC's ($32k) to keep deploy cadence comparable across lanes.
 local PAIRS = {
     { key = "btc",  mkt = "BTC",  asset = 0, usd = 1, whale = 0.5 },
-    { key = "spx",  mkt = "SPX",  asset = 2, usd = 3, whale = 4 },
-    { key = "gold", mkt = "GOLD", asset = 4, usd = 5, whale = 8 },
+    { key = "spx",  mkt = "SPX",  asset = 2, usd = 3, whale = 2 },
+    { key = "gold", mkt = "GOLD", asset = 4, usd = 5, whale = 4 },
 }
 
 -- Fixed squads by faction (assets = Armada, USD = Cortex; see gen-startscript.sh).

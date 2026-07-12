@@ -31,11 +31,20 @@ BINANCE_COMBINED = ("wss://stream.binance.com:9443/stream?streams="
                     "btcusdt@bookTicker/paxgusdt@bookTicker")
 COINBASE_WS = "wss://ws-feed.exchange.coinbase.com"
 HYPERLIQUID_WS = "wss://api.hyperliquid.xyz/ws"
+BYBIT_WS = "wss://stream.bybit.com/v5/public/spot"
 
 MARKETS = ("BTC", "GOLD", "SPX")
 BINANCE_SYMBOL_MKT = {"btcusdt": "BTC", "paxgusdt": "GOLD"}
 HL_COIN_MKT = {"xyz:SP500": "SPX", "xyz:GOLD": "GOLD"}
 HL_PRICE_OWNER = {"SPX": True, "GOLD": True}   # Hyperliquid owns these prices
+# Bybit xStocks/RWA spot: extra volume for the thin flank markets.
+# normalize=True: instrument unit differs from the primary (SPYX share ~$745
+# vs SP500 index contract ~$7563) — qty is rescaled by price ratio on ingest.
+# XAUT = 1 oz = same unit as xyz:GOLD; no rescale.
+BYBIT_SYMBOL_MKT = {
+    "SPYXUSDT": {"mkt": "SPX", "normalize": True},
+    "XAUTUSDT": {"mkt": "GOLD", "normalize": False},
+}
 
 
 def coinbase_is_buyer_maker(side):
@@ -127,6 +136,36 @@ def route_hyperliquid(msg, buckets):
         m, q, p = hl_is_buyer_maker(t["side"]), float(t["sz"]), float(t["px"])
         bucket_trade(buckets[mkt], m, q, p)
         out.append((mkt, m, q, p))
+    return out
+
+
+def route_bybit(msg, buckets):
+    """Route one Bybit publicTrade message; returns [(mkt, m, eq_qty, price), ...].
+
+    Secondary venue: preserves the primary (Hyperliquid) price and, where the
+    instrument unit differs, converts qty into primary-instrument units via
+    the price ratio so volume multipliers stay meaningful.
+    """
+    topic = msg.get("topic", "")
+    if not topic.startswith("publicTrade."):
+        return []
+    cfg = BYBIT_SYMBOL_MKT.get(topic.split(".", 1)[1])
+    if not cfg:
+        return []
+    mkt = cfg["mkt"]
+    out = []
+    for t in msg.get("data", []):
+        m = t.get("S") == "Sell"          # taker side: Sell => taker sold
+        q, p = float(t["v"]), float(t["p"])
+        primary = buckets[mkt]["price"]
+        eq = q
+        if cfg["normalize"] and primary > 0:
+            eq = q * p / primary          # venue units -> primary units
+        px0 = buckets[mkt]["price"]
+        bucket_trade(buckets[mkt], m, eq, p)
+        if px0:
+            buckets[mkt]["price"] = px0   # primary venue owns the price
+        out.append((mkt, m, eq, p))
     return out
 
 
@@ -234,7 +273,7 @@ async def coinbase_trades(buckets, bc, throttle, legacy):
     await _reconnecting("coinbase-trades", run)
 
 
-async def hyperliquid_trades(buckets, bc, throttle):
+async def hyperliquid_trades(buckets, bc, throttle, stats):
     import time
     import websockets
 
@@ -246,10 +285,49 @@ async def hyperliquid_trades(buckets, bc, throttle):
             print("hyperliquid trade stream connected (" + ", ".join(HL_COIN_MKT) + ")", flush=True)
             async for raw in ws:
                 for mkt, m, q, p in route_hyperliquid(json.loads(raw), buckets):
+                    stats.hit(mkt, "HL", q, p)
                     if throttle.allow(q, time.time()):
                         bc.send(format_trade(mkt, m, q, p, "HL"))
 
     await _reconnecting("hyperliquid-trades", run)
+
+
+async def bybit_trades(buckets, bc, throttle, stats):
+    import time
+    import websockets
+
+    async def run():
+        async with websockets.connect(BYBIT_WS, ping_interval=20) as ws:
+            await ws.send(json.dumps({"op": "subscribe",
+                                      "args": ["publicTrade." + s for s in BYBIT_SYMBOL_MKT]}))
+            print("bybit trade stream connected (" + ", ".join(BYBIT_SYMBOL_MKT) + ")", flush=True)
+            async for raw in ws:
+                for mkt, m, q, p in route_bybit(json.loads(raw), buckets):
+                    stats.hit(mkt, "BY", q, p)
+                    if throttle.allow(q, time.time()):
+                        bc.send(format_trade(mkt, m, q, p, "BY"))
+
+    await _reconnecting("bybit-trades", run)
+
+
+class FeedStats:
+    """Per-market/venue capture counters, printed every 60s for thin-volume
+    diagnostics (how many trades per minute are we actually seeing?)."""
+
+    def __init__(self):
+        self.counts = {}
+        self.notional = {}
+
+    def hit(self, mkt, venue, qty, price):
+        key = f"{mkt}/{venue}"
+        self.counts[key] = self.counts.get(key, 0) + 1
+        self.notional[key] = self.notional.get(key, 0.0) + qty * price
+
+    def flush(self):
+        line = " ".join(f"{k}={v}trades/${self.notional[k]:,.0f}"
+                        for k, v in sorted(self.counts.items()))
+        print(f"stats/min: {line or 'no trades'}", flush=True)
+        self.counts, self.notional = {}, {}
 
 
 SYN_START = {"BTC": 64000.0, "GOLD": 4100.0, "SPX": 6500.0}
@@ -282,13 +360,16 @@ async def main():
     bc = Broadcaster()
     await asyncio.start_server(bc.handle, "127.0.0.1", args.port)
     throttle = TradeThrottle()
+    stats = FeedStats()
     if args.synthetic:
         asyncio.create_task(synthetic_trades(buckets, bc, throttle, args.legacy))
     else:
         asyncio.create_task(binance_combined(buckets, bc, throttle, args.legacy))
         asyncio.create_task(coinbase_trades(buckets, bc, throttle, args.legacy))
-        asyncio.create_task(hyperliquid_trades(buckets, bc, throttle))
+        asyncio.create_task(hyperliquid_trades(buckets, bc, throttle, stats))
+        asyncio.create_task(bybit_trades(buckets, bc, throttle, stats))
     print(f"feedd on 127.0.0.1:{args.port} synthetic={args.synthetic} legacy={args.legacy}", flush=True)
+    tick = 0
     while True:
         await asyncio.sleep(1)
         for mkt in MARKETS:
@@ -297,6 +378,9 @@ async def main():
             bc.send(format_line_legacy(buckets["BTC"]))
         for b in buckets.values():
             b["buy"] = b["sell"] = 0.0   # keep last price
+        tick = tick + 1
+        if tick % 60 == 0:
+            stats.flush()
 
 
 if __name__ == "__main__":

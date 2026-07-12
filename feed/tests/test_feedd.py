@@ -17,6 +17,7 @@ from feedd import (
     new_bucket,
     new_buckets,
     route_binance,
+    route_bybit,
     route_hyperliquid,
 )
 
@@ -128,6 +129,39 @@ def test_route_hyperliquid_maps_coins_and_ignores_others():
 def test_route_hyperliquid_ignores_non_trade_channels():
     bs = new_buckets()
     assert route_hyperliquid({"channel": "subscriptionResponse", "data": {}}, bs) == []
+
+
+def test_bybit_spyx_normalizes_share_units_to_index_contracts():
+    # SPYX trades in ETF-share units (~$745); the SPX bucket is denominated in
+    # SP500 index-contract units (~$7563). 10 shares ~ 0.985 contracts.
+    bs = new_buckets()
+    route_hyperliquid({"channel": "trades", "data": [
+        {"coin": "xyz:SP500", "side": "B", "px": "7563.0", "sz": "0.5"}]}, bs)
+    hits = route_bybit({"topic": "publicTrade.SPYXUSDT", "data": [
+        {"S": "Buy", "v": "10", "p": "745.0"}]}, bs)
+    assert len(hits) == 1
+    mkt, m, eq, p = hits[0]
+    assert mkt == "SPX" and m is False
+    assert abs(eq - 10 * 745.0 / 7563.0) < 1e-9
+    assert bs["SPX"]["price"] == 7563.0            # HL keeps the price
+    assert abs(bs["SPX"]["buy"] - (0.5 + eq)) < 1e-9
+
+
+def test_bybit_xaut_counts_oz_without_rescale_and_taker_side():
+    bs = new_buckets()
+    route_hyperliquid({"channel": "trades", "data": [
+        {"coin": "xyz:GOLD", "side": "B", "px": "4100.0", "sz": "1.0"}]}, bs)
+    hits = route_bybit({"topic": "publicTrade.XAUTUSDT", "data": [
+        {"S": "Sell", "v": "2.5", "p": "4095.0"}]}, bs)
+    assert hits == [("GOLD", True, 2.5, 4095.0)]
+    assert bs["GOLD"]["sell"] == 2.5               # oz units, no rescale
+    assert bs["GOLD"]["price"] == 4100.0           # HL keeps the price
+
+
+def test_bybit_ignores_unknown_topics():
+    bs = new_buckets()
+    assert route_bybit({"topic": "publicTrade.DOGEUSDT", "data": [{"S": "Buy", "v": "1", "p": "1"}]}, bs) == []
+    assert route_bybit({"topic": "orderbook.SPYXUSDT", "data": []}, bs) == []
 
 
 def test_throttle_caps_small_trades_per_second():

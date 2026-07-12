@@ -27,11 +27,13 @@ local UP    = { 0.20, 0.90, 0.30 }
 local DOWN  = { 0.95, 0.20, 0.20 }
 local WHITE = { 0.95, 0.95, 0.95 }
 
--- Lanes: ticker anchored at the midpoint between the pair's bases
+-- Lanes: ticker anchored at the midpoint between the pair's bases, nudged
+-- toward the lane's corner (ox/oz are fractions of map size) so the three
+-- tickers spread apart instead of crowding the center
 local LANES = {
-    { key = "spx",  mkt = "SPX",  asset = 2, usd = 3, label = "SP500" },
-    { key = "btc",  mkt = "BTC",  asset = 0, usd = 1, label = "BTC" },
-    { key = "gold", mkt = "GOLD", asset = 4, usd = 5, label = "GOLD" },
+    { key = "spx",  mkt = "SPX",  asset = 2, usd = 3, label = "SP500", ox = -0.15, oz = -0.15 },
+    { key = "btc",  mkt = "BTC",  asset = 0, usd = 1, label = "BTC",   ox = 0,     oz = 0 },
+    { key = "gold", mkt = "GOLD", asset = 4, usd = 5, label = "GOLD",  ox = 0.15,  oz = 0.15 },
 }
 
 local VOL_CAP    = 5                  -- full-scale pulse (BTC-equivalent notional units)
@@ -178,7 +180,8 @@ function widget:DrawScreen()
     for _, l in ipairs(LANES) do
         local ba, bu = basePos[l.asset], basePos[l.usd]
         if ba and bu then
-            local mx, mz = (ba.x + bu.x) / 2, (ba.z + bu.z) / 2
+            local mx = (ba.x + bu.x) / 2 + (l.ox or 0) * Game.mapSizeX
+            local mz = (ba.z + bu.z) / 2 + (l.oz or 0) * Game.mapSizeZ
             local gy = Spring.GetGroundHeight(mx, mz) or 0
             local px, py, pz = Spring.WorldToScreenCoords(mx, math.max(gy, 0) + 500, mz)
             if pz and pz < 1 then

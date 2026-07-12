@@ -47,10 +47,10 @@ cat > "$DATA_DIR/script.txt" <<EOF
     }
     [AI0] { Name=BTC;       ShortName=BARb; Host=0; Team=0; [OPTIONS] { disabledunits=$AI_DISABLED_UNITS_MID; } }
     [AI1] { Name=USD-BTC;   ShortName=BARb; Host=0; Team=1; [OPTIONS] { disabledunits=$AI_DISABLED_UNITS_MID; } }
-    [AI2] { Name=SP500;     ShortName=BARb; Host=0; Team=2; }
-    [AI3] { Name=USD-SP500; ShortName=BARb; Host=0; Team=3; }
-    [AI4] { Name=GOLD;      ShortName=BARb; Host=0; Team=4; }
-    [AI5] { Name=USD-GOLD;  ShortName=BARb; Host=0; Team=5; }
+    [AI2] { Name=SP500;     ShortName=BARb; Host=0; Team=2; [OPTIONS] { disabledunits=$AI_DISABLED_UNITS_FLANK; } }
+    [AI3] { Name=USD-SP500; ShortName=BARb; Host=0; Team=3; [OPTIONS] { disabledunits=$AI_DISABLED_UNITS_FLANK; } }
+    [AI4] { Name=GOLD;      ShortName=BARb; Host=0; Team=4; [OPTIONS] { disabledunits=$AI_DISABLED_UNITS_FLANK; } }
+    [AI5] { Name=USD-GOLD;  ShortName=BARb; Host=0; Team=5; [OPTIONS] { disabledunits=$AI_DISABLED_UNITS_FLANK; } }
     [TEAM0] { TeamLeader=0; AllyTeam=0; Side=Armada; StartPosX=7600;  StartPosZ=4900;  RgbColor=0.97 0.58 0.10; }
     [TEAM1] { TeamLeader=0; AllyTeam=1; Side=Cortex; StartPosX=4600;  StartPosZ=7400;  RgbColor=0.30 0.69 0.31; }
     [TEAM2] { TeamLeader=0; AllyTeam=0; Side=Armada; StartPosX=7400;  StartPosZ=1200;  RgbColor=0.25 0.55 0.95; }

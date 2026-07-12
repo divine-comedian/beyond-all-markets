@@ -59,8 +59,40 @@ local function watchdog()
     end
 end
 
+-- Heartbeat telemetry: this widget only exists on the hosting player's
+-- (headless) engine, so Echo goes to the host infolog and NEVER to a
+-- spectator's on-screen console.
+local LANES_HB = {
+    { key = "BTC",  asset = 0, usd = 1 },
+    { key = "SPX",  asset = 2, usd = 3 },
+    { key = "GOLD", asset = 4, usd = 5 },
+}
+local lastHeartbeat = -1
+
+local function heartbeat()
+    local f = Spring.GetGameFrame()
+    if f - lastHeartbeat < 300 then return end
+    lastHeartbeat = f
+    local parts = { "MKTWAR f=" .. f }
+    for _, l in ipairs(LANES_HB) do
+        local lk = l.key:lower()
+        parts[#parts + 1] = string.format("%s a=%d/u=%d am=%.0f um=%.0f b=%.4f s=%.4f px=%.1f%s%s",
+            l.key,
+            Spring.GetTeamUnitCount(l.asset) or 0, Spring.GetTeamUnitCount(l.usd) or 0,
+            Spring.GetTeamResources(l.asset, "metal") or 0,
+            Spring.GetTeamResources(l.usd, "metal") or 0,
+            Spring.GetGameRulesParam("mkt_buy_" .. lk) or 0,
+            Spring.GetGameRulesParam("mkt_sell_" .. lk) or 0,
+            Spring.GetGameRulesParam("mkt_price_" .. lk) or 0,
+            (Spring.GetGameRulesParam("mkt_stuck" .. l.asset) or 0) == 1 and " STUCK-a" or "",
+            (Spring.GetGameRulesParam("mkt_stuck" .. l.usd) or 0) == 1 and " STUCK-u" or "")
+    end
+    Spring.Echo(table.concat(parts, " | "))
+end
+
 function widget:Update()
     watchdog()
+    heartbeat()
     if not client then
         local now = os.clock()
         if now >= retryAt then
