@@ -31,14 +31,14 @@ cat > "$DATA_DIR/script.txt" <<EOF
     }
     [AI0]
     {
-        Name=Bulls;
+        Name=BTC;
         ShortName=BARb;
         Host=0;
         Team=$BULLS_TEAM;
     }
     [AI1]
     {
-        Name=Bears;
+        Name=USD;
         ShortName=BARb;
         Host=0;
         Team=$BEARS_TEAM;
@@ -48,12 +48,14 @@ cat > "$DATA_DIR/script.txt" <<EOF
         TeamLeader=0;
         AllyTeam=0;
         Side=Armada;
+        RgbColor=0.97 0.58 0.10;
     }
     [TEAM1]
     {
         TeamLeader=0;
         AllyTeam=1;
         Side=Cortex;
+        RgbColor=0.30 0.69 0.31;
     }
     [ALLYTEAM0] { NumAllies=0; }
     [ALLYTEAM1] { NumAllies=0; }
