@@ -29,7 +29,7 @@ export PRD_RAPID_USE_STREAMER=false
 "$ENGINE_DIR/pr-downloader" --filesystem-writepath "$DATA_DIR" --download-map "$MAP_NAME"
 
 # 4. Resolve concrete game name from rapid index and persist it into war.env
-game_name=$(zcat "$DATA_DIR"/rapid/*/versions.gz 2>/dev/null \
+game_name=$(find "$DATA_DIR/rapid" -name versions.gz -exec zcat {} + 2>/dev/null \
             | awk -F, -v tag="$GAME_RAPID_TAG" '$1==tag {print $4; exit}')
 if [ -n "$game_name" ]; then
   sed -i "s|^GAME_NAME=.*|GAME_NAME=\"$game_name\"|" "$(dirname "$0")/../config/war.env"
