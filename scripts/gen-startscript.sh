@@ -12,6 +12,8 @@ cat > "$DATA_DIR/script.txt" <<EOF
     IsHost=1;
     HostIP=0.0.0.0;
     HostPort=$HOST_PORT;
+    AutohostIP=127.0.0.1;
+    AutohostPort=8453;
     MyPlayerName=Warhost;
     NumPlayers=1;
     NumTeams=2;
@@ -19,6 +21,8 @@ cat > "$DATA_DIR/script.txt" <<EOF
     [MODOPTIONS]
     {
         deathmode=neverend;
+        MinSpeed=1;
+        MaxSpeed=1;
     }
     [PLAYER0]
     {
