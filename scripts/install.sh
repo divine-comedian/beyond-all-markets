@@ -57,7 +57,12 @@ MaxTextureAtlasSizeX = 16384
 MaxTextureAtlasSizeY = 16384
 EOF
 
-# 6. Mutator dev-archive link
+# 6. Mutator dev-archive link + pin its BAR dependency to the exact version.
+# A floating tag (rapid://byar:test) resolves differently on each machine as
+# BAR updates, breaking spectators whose index is newer than the host's game.
+if [ -n "$game_name" ]; then
+  sed -i "s|^        \".*\",$|        \"$game_name\",|" "$ROOT/mutator/MarketWar.sdd/modinfo.lua"
+fi
 mkdir -p "$DATA_DIR/games"
 ln -sfn "$ROOT/mutator/MarketWar.sdd" "$DATA_DIR/games/MarketWar.sdd"
 
