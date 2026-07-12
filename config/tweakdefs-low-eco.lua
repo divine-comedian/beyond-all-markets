@@ -47,4 +47,26 @@ for name, ud in pairs(UnitDefs) do
     end
 end
 
-Spring.Echo("MKTWAR-LOWECO producer structures scaled to " .. (SCALE * 100) .. "% output: " .. nScaled)
+-- Commanders: 2x health, 1.5x weapon damage — a T1 squad shouldn't delete a
+-- commander minutes into a round; commander kills should end CONTESTED rounds.
+local nComm = 0
+for name, ud in pairs(UnitDefs) do
+    local cp = ud.customparams
+    if cp and cp.iscommander then
+        if ud.health then ud.health = tonumber(ud.health) * 2 end
+        if ud.maxdamage then ud.maxdamage = tonumber(ud.maxdamage) * 2 end
+        if ud.weapondefs then
+            for _, wd in pairs(ud.weapondefs) do
+                if type(wd) == "table" and type(wd.damage) == "table" then
+                    for k, v in pairs(wd.damage) do
+                        if tonumber(v) then wd.damage[k] = tonumber(v) * 1.5 end
+                    end
+                end
+            end
+        end
+        nComm = nComm + 1
+    end
+end
+
+Spring.Echo("MKTWAR-LOWECO producer structures scaled to " .. (SCALE * 100) .. "% output: " .. nScaled
+    .. " | commanders buffed (2x hp, 1.5x dmg): " .. nComm)

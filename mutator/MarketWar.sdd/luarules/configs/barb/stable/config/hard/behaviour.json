@@ -14,8 +14,8 @@
 		"thr_mod": {				//AI attacks everything with final threat (after all calculations) <= 1
 			"attack": [0.25, 0.3],  // MKTWAR v2: the config comments' original "org" values — fearless targeting for target selection of attack task |  values <1 makes enemy group seem less of an thread for ai => ai attacks stronger groups than it own | org=0.25, 0.3
 			"defence": [0.3, 0.5],  // [<min>, <max>] enemy threat modifier for group size calculation of defence task; org=0.95, 0.95 | high values = low risk; low values = high risk 
-			"mobile": 1.0,  // initial modifier for power of attack group based on mobile enemy threat; org=1.05
-			"static": 1.0,  // initial modifier for power of attack group based on static enemy threat; org= 1.2
+			"mobile": 0.7,  // MKTWAR was 1.0 — push into mobile armies
+			"static": 0.5,  // MKTWAR was 1.0 — chokepoint porc must not stall the whole army
 			"comm": 0.003   // because of power of dgun
 		},
 		// anti-air threat threshold, air factories will stop production when AA threat exceeds

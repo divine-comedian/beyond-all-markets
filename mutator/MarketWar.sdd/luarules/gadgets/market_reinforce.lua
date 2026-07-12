@@ -23,10 +23,12 @@ local WHALE_PER_STEP    = 4           -- units per WHALE_BTC step
 local WHALE_MAX         = 24
 local WHALE_COOLDOWN_SEC = 30         -- per side
 
--- Fixed T1 squads (team 0 = Armada, team 1 = Cortex; see gen-startscript.sh)
+-- Fixed squads (team 0 = Armada, team 1 = Cortex; see gen-startscript.sh).
+-- Deliberately roster-diverse: raiders + rockets + tank + plasma artillery
+-- bot + radar bot, so market drops always show the wider unit range on field.
 local SQUADS = {
-    [0] = { "armpw", "armpw", "armpw", "armrock", "armstump" },
-    [1] = { "corak", "corak", "corak", "corstorm", "corraid" },
+    [0] = { "armpw", "armpw", "armrock", "armham", "armstump", "armmark" },
+    [1] = { "corak", "corak", "corstorm", "corthud", "corraid", "corvoyr" },
 }
 
 local priceHist = {}                  -- rolling 60 x 1s samples

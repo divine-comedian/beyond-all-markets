@@ -14,13 +14,20 @@ local DEBUG = false
 local BULLS_TEAM, BEARS_TEAM = 0, 1
 local METAL_PER_BTC   = 400
 local ENERGY_PER_BTC  = 4000
-local BASELINE_METAL  = 4
-local BASELINE_ENERGY = 40
+local BASELINE_METAL  = 6
+local BASELINE_ENERGY = 60
 local FEED_HOST, FEED_PORT = "127.0.0.1", 8642
+
+-- CircuitAI plans tiers/production off measured income rates; raw market
+-- buckets (zero for minutes, then a burst) make its planner flap. Income is
+-- granted through an EMA (~20s effective) so the AI sees a stable economy.
+-- HUD flow bars and reinforcement triggers keep reading the RAW rates.
+local SMOOTH_ALPHA = 1 / 20
 
 if gadgetHandler:IsSyncedCode() then
     ----------------------------------------------------------------- SYNCED
     local pendingBuy, pendingSell, price = 0, 0, 0
+    local smoothBuy, smoothSell = 0, 0
     GG.MarketWar = GG.MarketWar or {}
     GG.MarketWar.buyRate, GG.MarketWar.sellRate, GG.MarketWar.price = 0, 0, 0
     GG.MarketWar.surge = GG.MarketWar.surge or {}
@@ -64,10 +71,12 @@ if gadgetHandler:IsSyncedCode() then
         if f % 30 ~= 0 then return end          -- once per second (30 sim fps)
         local bm = surgeMult(BULLS_TEAM)
         local sm = surgeMult(BEARS_TEAM)
-        local m0 = (BASELINE_METAL  + pendingBuy  * METAL_PER_BTC)  * bm
-        local e0 = (BASELINE_ENERGY + pendingBuy  * ENERGY_PER_BTC) * bm
-        local m1 = (BASELINE_METAL  + pendingSell * METAL_PER_BTC)  * sm
-        local e1 = (BASELINE_ENERGY + pendingSell * ENERGY_PER_BTC) * sm
+        smoothBuy  = smoothBuy  + (pendingBuy  - smoothBuy)  * SMOOTH_ALPHA
+        smoothSell = smoothSell + (pendingSell - smoothSell) * SMOOTH_ALPHA
+        local m0 = (BASELINE_METAL  + smoothBuy  * METAL_PER_BTC)  * bm
+        local e0 = (BASELINE_ENERGY + smoothBuy  * ENERGY_PER_BTC) * bm
+        local m1 = (BASELINE_METAL  + smoothSell * METAL_PER_BTC)  * sm
+        local e1 = (BASELINE_ENERGY + smoothSell * ENERGY_PER_BTC) * sm
         Spring.AddTeamResource(BULLS_TEAM, "metal",  m0)
         Spring.AddTeamResource(BULLS_TEAM, "energy", e0)
         Spring.AddTeamResource(BEARS_TEAM, "metal",  m1)
