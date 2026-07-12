@@ -10,6 +10,8 @@ function widget:GetInfo()
     }
 end
 
+local DEBUG = false
+
 -- Only the hosting player's client reads the local feed daemon and relays it
 -- into synced code via SendLuaRulesMsg (keeps the sim deterministic).
 local FEED_HOST, FEED_PORT = "127.0.0.1", 8642
@@ -52,6 +54,12 @@ function widget:Update()
         local prefix = data:sub(1, 4)
         if prefix == "mkt:" or prefix == "trd:" then
             Spring.SendLuaRulesMsg(data)
+            if prefix == "trd:" then
+                nTrades = (nTrades or 0) + 1
+                if DEBUG and nTrades % 20 == 1 then
+                    Spring.Echo("MKTWAR-BRIDGE trd#" .. nTrades)
+                end
+            end
         end
         data, err = client:receive("*l")
     end

@@ -18,6 +18,7 @@ function gadget:GameFrame(f)
     local m1 = Spring.GetTeamResources(1, "metal")
     local mw = GG.MarketWar or {}
     Spring.Echo(string.format(
-        "MKTWAR f=%d bulls_units=%d bears_units=%d bulls_metal=%.0f bears_metal=%.0f buy=%.4f sell=%.4f px=%.1f",
-        f, units0, units1, m0 or 0, m1 or 0, mw.buyRate or 0, mw.sellRate or 0, mw.price or 0))
+        "MKTWAR f=%d bulls_units=%d bears_units=%d bulls_metal=%.0f bears_metal=%.0f buy=%.4f sell=%.4f px=%.1f ai0=%s ai1=%s",
+        f, units0, units1, m0 or 0, m1 or 0, mw.buyRate or 0, mw.sellRate or 0, mw.price or 0,
+        tostring(Spring.GetGameRulesParam("ainame_0")), tostring(Spring.GetGameRulesParam("ainame_1"))))
 end

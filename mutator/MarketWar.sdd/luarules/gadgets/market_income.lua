@@ -8,6 +8,8 @@ function gadget:GetInfo()
     }
 end
 
+local DEBUG = false
+
 -- Tuning (mirror config/war.env; live flow is ~0.001-0.05 BTC/s quiet, ~1+ spike)
 local BULLS_TEAM, BEARS_TEAM = 0, 1
 local METAL_PER_BTC   = 400
@@ -45,6 +47,8 @@ if gadgetHandler:IsSyncedCode() then
         local side, q, tp = msg:match("^trd:([BS]):([%d%.]+):([%d%.]+)$")
         if side then
             if playerID ~= 0 then return true end
+            nTrades = (nTrades or 0) + 1
+            if DEBUG and nTrades % 20 == 1 then Spring.Echo("MKTWAR-SYNC trd#" .. nTrades) end
             SendToUnsynced("mkt_trd", side == "B" and 1 or 0, tonumber(q), tonumber(tp))
             return true
         end
@@ -86,7 +90,12 @@ else
     -- Hand relayed trades to the HUD widget (registered global MarketWarTrade).
     -- The feed->game bridge itself lives in luaui/widgets/market_feed.lua:
     -- LuaSocket is only exposed to LuaUI, not to unsynced gadgets.
+    local nTrades = 0
     local function RecvTrade(_, isBuy, qty, tradePrice)
+        nTrades = nTrades + 1
+        if DEBUG and nTrades % 20 == 1 then
+            Spring.Echo("MKTWAR-UNSYNC trd#" .. nTrades .. " luaui=" .. tostring(Script.LuaUI("MarketWarTrade")))
+        end
         if Script.LuaUI("MarketWarTrade") then
             Script.LuaUI.MarketWarTrade(isBuy, qty, tradePrice)
         end

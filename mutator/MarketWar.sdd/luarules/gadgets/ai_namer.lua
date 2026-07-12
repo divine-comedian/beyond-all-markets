@@ -1,10 +1,11 @@
 -- Market War override of BAR's ai_namer.lua (same VFS path shadows the base
--- game's gadget): BAR randomly renames AI teams from community name pools,
--- which clobbers the BTC/USD names set in the start script. Keep the names.
+-- gadget). BAR's UI reads GameRulesParam 'ainame_<teamID>' for AI display
+-- names; the base gadget fills it with random community names. Set our
+-- asset names instead.
 function gadget:GetInfo()
     return {
         name    = "AI namer",
-        desc    = "Market War: AIs keep their start-script names (BTC/USD)",
+        desc    = "Market War: AI teams display as BTC/USD",
         author  = "bar-market-war",
         date    = "2026",
         license = "GNU GPL, v2 or later",
@@ -12,4 +13,17 @@ function gadget:GetInfo()
         enabled = true,
     }
 end
--- intentionally no renaming
+
+if not gadgetHandler:IsSyncedCode() then return end
+
+local ASSET = { [0] = "BTC", [1] = "USD" }
+
+function gadget:Initialize()
+    for _, teamID in ipairs(Spring.GetTeamList()) do
+        local isAI = select(4, Spring.GetTeamInfo(teamID, false))
+        if isAI and ASSET[teamID] then
+            Spring.SetGameRulesParam('ainame_' .. teamID, ASSET[teamID])
+        end
+    end
+    gadgetHandler:RemoveGadget(self)
+end

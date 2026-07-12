@@ -10,6 +10,8 @@ function widget:GetInfo()
     }
 end
 
+local DEBUG = false
+
 -- Team identity (match the start script)
 local BTC = { 0.97, 0.58, 0.10 }      -- team 0, fed by taker buys
 local USD = { 0.30, 0.69, 0.31 }      -- team 1, fed by taker sells
@@ -25,7 +27,7 @@ local FLASH_LIFE = 3.0
 local TRADE_ROWS = 14
 
 local lastPrice, prevPrice = 0, 0
-local pctChange = 0
+local pctChange, priceDelta = 0, 0
 local tickDir, tickAt = 0, -10       -- +1/-1, os.clock of last price change
 local lastSampledFrame = -1
 
@@ -43,7 +45,10 @@ local function logScale(v)
     return math.min(1, math.log(1 + v) / math.log(1 + VOL_CAP))
 end
 
+local nTrades = 0
 local function OnTrade(isBuy, qty, price)
+    nTrades = nTrades + 1
+    if DEBUG and nTrades % 20 == 1 then Spring.Echo("MKTWAR-HUD trd#" .. nTrades) end
     table.insert(trades, 1, { isBuy = isBuy == 1, qty = qty, price = price })
     if #trades > TRADE_ROWS then table.remove(trades) end
 end
@@ -52,20 +57,16 @@ local mapCenter
 
 function widget:Initialize()
     mapCenter = { x = Game.mapSizeX / 2, z = Game.mapSizeZ / 2 }
-    if widgetHandler.RegisterGlobal then
-        widgetHandler:RegisterGlobal(widget, "MarketWarTrade", OnTrade)
-    else
-        MarketWarTrade = OnTrade
-    end
+    -- widget-facing handler proxy injects the owner: 2-arg form (name, value)
+    local ok = widgetHandler:RegisterGlobal("MarketWarTrade", OnTrade)
+    Spring.Echo("MKTWAR-HUD RegisterGlobal MarketWarTrade => " .. tostring(ok))
     -- force team colors on this client; BAR's auto-color otherwise repaints
     Spring.SetTeamColor(0, BTC[1], BTC[2], BTC[3])
     Spring.SetTeamColor(1, USD[1], USD[2], USD[3])
 end
 
 function widget:Shutdown()
-    if widgetHandler.DeregisterGlobal then
-        widgetHandler:DeregisterGlobal(widget, "MarketWarTrade")
-    end
+    widgetHandler:DeregisterGlobal("MarketWarTrade")
 end
 
 local function refreshBases()
@@ -84,10 +85,11 @@ function widget:GameFrame(f)
     lastPrice = getP("mkt_price")
     if prevPrice > 0 and lastPrice ~= prevPrice then
         pctChange = (lastPrice - prevPrice) / prevPrice * 100
+        priceDelta = lastPrice - prevPrice
         tickDir = lastPrice > prevPrice and 1 or -1
         tickAt = os.clock()
     else
-        pctChange = 0
+        pctChange, priceDelta = 0, 0
     end
 
     refreshBases()
@@ -158,10 +160,9 @@ function widget:DrawScreen()
         }
         gl.Color(pc[1], pc[2], pc[3], 0.55 + 0.45 * flash)
         gl.Text(string.format("$%.1f", lastPrice), px, py + 40 * s, 72 * s, "co")
-        if pctChange ~= 0 then
-            gl.Color(pc[1], pc[2], pc[3], 0.55 + 0.45 * flash)
-            gl.Text(string.format("%+.3f%%", pctChange), px, py + 8 * s, 24 * s, "co")
-        end
+        gl.Color(pc[1], pc[2], pc[3], 0.55 + 0.45 * flash)
+        gl.Text(string.format("%s$%.1f  (%+.3f%%)", priceDelta >= 0 and "+" or "-",
+            math.abs(priceDelta), pctChange), px, py + 8 * s, 24 * s, "co")
         -- per-side income summary under the price
         local surge0, surge1 = getP("mkt_surge0"), getP("mkt_surge1")
         gl.Color(BTC[1], BTC[2], BTC[3], 0.9)
@@ -194,9 +195,10 @@ function widget:DrawScreen()
                 local c = TEAMCOL[p.team]
                 gl.Color(c[1], c[2], c[3], 1 - age)
                 local size = (36 + 30 * logScale(p.vol)) * s
-                local pct = ""
-                if pctChange ~= 0 then pct = string.format("%+.2f%%  ", pctChange) end
-                gl.Text(string.format("%s+%d metal  +%d energy", pct, p.metal, p.energy),
+                -- 1s % moves are ~0.00x% and rendered as 0.00; the dollar
+                -- delta is always legible, so lead with that
+                local move = string.format("%s$%.1f", priceDelta >= 0 and "+" or "-", math.abs(priceDelta))
+                gl.Text(string.format("%s  +%d metal  +%d energy", move, p.metal, p.energy),
                     sx, sy + 70 * s * age, size, "co")
             end
         end
