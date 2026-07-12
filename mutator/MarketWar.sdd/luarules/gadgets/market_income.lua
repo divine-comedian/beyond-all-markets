@@ -23,6 +23,15 @@ if gadgetHandler:IsSyncedCode() then
     GG.MarketWar.buyRate, GG.MarketWar.sellRate, GG.MarketWar.price = 0, 0, 0
     GG.MarketWar.surge = GG.MarketWar.surge or {}
 
+    function gadget:GameStart()
+        -- deep storage: market bursts bank instead of overflowing the
+        -- default 1100 cap (verified overflow in end-to-end test)
+        for _, teamID in ipairs({ BULLS_TEAM, BEARS_TEAM }) do
+            Spring.SetTeamResource(teamID, "ms", 100000)
+            Spring.SetTeamResource(teamID, "es", 1000000)
+        end
+    end
+
     function gadget:RecvLuaMsg(msg, playerID)
         local b, s, p = msg:match("^mkt:([%d%.]+):([%d%.]+):([%d%.]+)$")
         if not b then return end

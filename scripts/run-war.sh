@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Run the endless market war, supervised: feedd + engine host, each restarted
+# on death. Usage: run-war.sh [live|synthetic] [spring-headless|spring]
+set -uo pipefail
+source "$(dirname "$0")/../config/war.env"
+MODE="${1:-live}"
+BIN="${2:-spring-headless}"
+mkdir -p "$DATA_DIR/logs"
+
+feed_args=""
+[ "$MODE" = "synthetic" ] && feed_args="--synthetic"
+
+start_feed() {
+    python3 "$ROOT/feed/feedd.py" --port "$FEED_PORT" $feed_args \
+        >> "$DATA_DIR/logs/feedd.log" 2>&1 &
+    FEED_PID=$!
+}
+
+start_engine() {
+    bash "$ROOT/scripts/gen-startscript.sh" 'Market War $VERSION' > /dev/null
+    ( cd "$DATA_DIR" && LD_LIBRARY_PATH="$SYSLIBS_DIR" \
+        "$ENGINE_DIR/$BIN" --write-dir "$DATA_DIR" script.txt ) \
+        >> "$DATA_DIR/logs/engine.log" 2>&1 &
+    ENGINE_PID=$!
+}
+
+stop_all() {
+    kill "$FEED_PID" "$ENGINE_PID" 2>/dev/null
+    exit 0
+}
+trap stop_all INT TERM
+
+start_feed
+start_engine
+echo "$(date -Is) war running: feedd=$FEED_PID engine=$ENGINE_PID (mode=$MODE bin=$BIN)"
+
+while true; do
+    sleep 10
+    if ! kill -0 "$FEED_PID" 2>/dev/null; then
+        echo "$(date -Is) feedd died, restarting"
+        start_feed
+    fi
+    if ! kill -0 "$ENGINE_PID" 2>/dev/null; then
+        echo "$(date -Is) engine died, restarting match"
+        start_engine
+    fi
+done
