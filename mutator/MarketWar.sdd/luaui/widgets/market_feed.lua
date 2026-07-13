@@ -71,6 +71,7 @@ local LANES_HB = {
 local lastHeartbeat = -1
 local prevDrop = 0
 local prevInter = {}
+local prevPush = 0
 
 -- Event telemetry (host infolog only): synced gadgets can't log without
 -- painting spectator consoles, so the host watches the rules params instead.
@@ -82,6 +83,13 @@ local function eventLog()
             Spring.GetGameRulesParam("mkt_drop_team") or -1,
             Spring.GetGameRulesParam("mkt_drop_n") or 0,
             Spring.GetGameRulesParam("mkt_drop_kind") or 0))
+    end
+    local pushF = Spring.GetGameRulesParam("mkt_push_frame") or 0
+    if pushF > 0 and pushF ~= prevPush then
+        prevPush = pushF
+        Spring.Echo(string.format("MKTWAR-PUSH f=%d team=%d n=%d", pushF,
+            Spring.GetGameRulesParam("mkt_push_team") or -1,
+            Spring.GetGameRulesParam("mkt_push_n") or 0))
     end
     for _, l in ipairs({ "btc", "spx", "gold", "eth" }) do
         local inter = Spring.GetGameRulesParam("mkt_intermission_" .. l) or 0
