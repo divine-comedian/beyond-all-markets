@@ -84,6 +84,12 @@ local function eventLog()
             Spring.GetGameRulesParam("mkt_drop_n") or 0,
             Spring.GetGameRulesParam("mkt_drop_kind") or 0))
     end
+    local insF = Spring.GetGameRulesParam("mkt_insure_frame") or 0
+    if insF > 0 and insF ~= (prevInsure or 0) then
+        prevInsure = insF
+        Spring.Echo(string.format("MKTWAR-INSURE f=%d team=%d (factory planted)", insF,
+            Spring.GetGameRulesParam("mkt_insure_team") or -1))
+    end
     local pushF = Spring.GetGameRulesParam("mkt_push_frame") or 0
     if pushF > 0 and pushF ~= prevPush then
         prevPush = pushF

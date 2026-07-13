@@ -32,6 +32,27 @@ end
 local startPos     = {}   -- teamID -> {x,y,z}
 local isCommander  = {}   -- unitDefID -> defName
 local commanderDef = {}   -- teamID -> defName
+local isFactory    = {}   -- unitDefID -> true
+
+-- Production insurance: a commander can survive a round reset, wander off
+-- and build eco forever without ever rebuilding unit production (seen live:
+-- SP500 retreated inland where no shipyard placement exists and all its land
+-- factories are banned). If a team has NO factory for 120s mid-round, the
+-- game plants the lane-appropriate one and the AI adopts it.
+local INSURANCE_FRAMES = 120 * 30
+local SEA_DROP = {   -- deep water per sea team (mirror market_conveyor.lua)
+    [2] = { x = 6394, z = 1639 },
+    [3] = { x = 1818, z = 4667 },
+    [4] = { x = 9832, z = 7117 },
+    [5] = { x = 6800, z = 11000 },
+}
+local INSURE_DEF = {  -- teamID -> factory unitdef name
+    [0] = "armlab", [1] = "corlab",     -- BTC: ground
+    [2] = "armsy",  [3] = "corsy",      -- SP500: naval
+    [4] = "armsy",  [5] = "corsy",      -- GOLD: naval
+    [6] = "armap",  [7] = "corap",      -- ETH: air
+}
+local noFactorySince = {}   -- teamID -> frame
 
 function gadget:Initialize()
     GG.MarketWar = GG.MarketWar or {}
@@ -41,6 +62,7 @@ function gadget:Initialize()
         if ud.customParams and ud.customParams.iscommander then
             isCommander[udid] = ud.name
         end
+        if ud.isFactory then isFactory[udid] = true end
     end
     for _, pr in ipairs(PAIRS) do
         pr.wins = { [pr.asset] = 0, [pr.usd] = 0 }
@@ -140,6 +162,51 @@ local function startRound(pr)
         pr.key, pr.round, pr.wins[pr.asset], pr.wins[pr.usd]))
 end
 
+local function insurePos(teamID)
+    local base = startPos[teamID]
+    if not base then return end
+    local drop = SEA_DROP[teamID]
+    if not drop then return base.x, base.z end   -- land/air: at base
+    -- naval: first comfortably deep water walking from base toward the drop
+    for t = 0, 1, 0.02 do
+        local x = base.x + (drop.x - base.x) * t
+        local z = base.z + (drop.z - base.z) * t
+        if Spring.GetGroundHeight(x, z) < -12 then
+            return x, z
+        end
+    end
+    return drop.x, drop.z
+end
+
+local function checkInsurance(f)
+    for teamID, defName in pairs(INSURE_DEF) do
+        local pr = teamPair[teamID]
+        if pr and pr.active then
+            local hasFactory = false
+            for _, uid in ipairs(Spring.GetTeamUnits(teamID)) do
+                if isFactory[Spring.GetUnitDefID(uid)] then hasFactory = true; break end
+            end
+            if hasFactory then
+                noFactorySince[teamID] = nil
+            else
+                noFactorySince[teamID] = noFactorySince[teamID] or f
+                if f - noFactorySince[teamID] >= INSURANCE_FRAMES then
+                    local x, z = insurePos(teamID)
+                    if x then
+                        local uid = Spring.CreateUnit(defName, x, Spring.GetGroundHeight(x, z), z, 0, teamID)
+                        if uid then
+                            Spring.SpawnCEG("commanderspawn", x, Spring.GetGroundHeight(x, z), z)
+                            Spring.SetGameRulesParam("mkt_insure_frame", f)
+                            Spring.SetGameRulesParam("mkt_insure_team", teamID)
+                            noFactorySince[teamID] = nil
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
 function gadget:GameFrame(f)
     for _, pr in ipairs(PAIRS) do
         if pr.pendingWipe and f >= pr.pendingWipe then
@@ -150,4 +217,5 @@ function gadget:GameFrame(f)
             startRound(pr)
         end
     end
+    if f % 300 == 0 then checkInsurance(f) end
 end

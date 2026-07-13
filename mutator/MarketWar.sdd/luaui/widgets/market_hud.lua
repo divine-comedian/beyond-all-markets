@@ -10,7 +10,7 @@ function widget:GetInfo()
     }
 end
 
-local BUILD = "MW v8"
+local BUILD = "MW v9"
 
 -- Teams (match gen-startscript.sh)
 local TEAMNAME = {
@@ -123,7 +123,10 @@ function widget:GameFrame(f)
         local buy, sell = getP("mkt_buy_" .. l.key), getP("mkt_sell_" .. l.key)
         local t = tape[l.mkt]
         t[#t + 1] = { buy = buy, sell = sell }
-        if #t > 10 then table.remove(t, 1) end
+        -- 15 minutes of 1s samples: BAR battles resolve on minutes, not
+        -- seconds — the flow bars should show who is winning the MARKET on
+        -- a timescale the battlefield can express
+        if #t > 900 then table.remove(t, 1) end
 
         pulses[#pulses + 1] = { team = l.asset, metal = getP("mkt_m" .. l.asset),
                                 energy = getP("mkt_e" .. l.asset), vol = buy, born = now, lane = l }
@@ -313,7 +316,7 @@ function widget:DrawScreen()
     gl.Color(0, 0, 0, 0.5)
     gl.Rect(tx - 10 * s, ty - panelH, tx + tw, ty + 24 * s)
     gl.Color(1, 1, 1, 0.95)
-    gl.Text("ORDER FLOW  last 10s", tx, ty + 8 * s, 14 * s, "o")
+    gl.Text("ORDER FLOW  last 15m", tx, ty + 8 * s, 14 * s, "o")
 
     local y = ty - 18 * s
     for _, l in ipairs(LANES) do
@@ -328,7 +331,7 @@ function widget:DrawScreen()
             gl.Color(c[1], c[2], c[3], 0.95)
             gl.Rect(tx, yy, tx + barW * frac, yy + rowH)
             gl.Color(1, 1, 1, 1)
-            gl.Text(string.format("%s %s %.3f", l.label, tag, vol), tx + 4 * s, yy + 2 * s, 11 * s, "o")
+            gl.Text(string.format("%s %s %.2f", l.label, tag, vol), tx + 4 * s, yy + 2 * s, 11 * s, "o")
         end
         bar(y, buy10, TEAMCOL[l.asset], "BUY ")
         bar(y - (rowH + 3 * s), sell10, TEAMCOL[l.usd], "SELL")
