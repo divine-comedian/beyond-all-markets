@@ -19,7 +19,7 @@ if not gadgetHandler:IsSyncedCode() then return end
 local SWEEP_FRAMES = 10 * 30   -- push cadence (fast: our orders must win the tug-of-war vs AI recalls)
 local BASE_RADIUS  = 1100      -- "parked near base" cylinder
 local GARRISON     = 8         -- units left home per team
-local PUSH_MAX     = 20        -- cap per sweep so pushes read as waves
+local PUSH_MAX     = 30        -- cap per sweep so pushes read as waves
 
 -- Lane pairs and push targets (sea lanes aim at the enemy's naval water,
 -- land/air lanes at the enemy base; mirrors market_reinforce.lua)
@@ -52,6 +52,34 @@ end
 
 local CMD_FIGHT, CMD_GUARD, CMD_WAIT, CMD_PATROL = CMD.FIGHT, CMD.GUARD, CMD.WAIT, CMD.PATROL
 
+-- Commander shepherd: broken/reloaded AI instances leave commanders standing
+-- idle for long stretches (worst on air/sea lanes). An idle commander is
+-- ordered to GUARD its nearest factory — permanent nanolathe assist that
+-- speeds production and burns banked metal.
+local function shepherd(teamID)
+    for _, uid in ipairs(Spring.GetTeamUnits(teamID)) do
+        if isCommander[Spring.GetUnitDefID(uid)] then
+            local cmds = Spring.GetUnitCommands(uid, 1)
+            if not cmds or #cmds == 0 then
+                local cx, _, cz = Spring.GetUnitPosition(uid)
+                local best, bestD
+                for _, fid in ipairs(Spring.GetTeamUnits(teamID)) do
+                    local ud = UnitDefs[Spring.GetUnitDefID(fid)]
+                    if ud and ud.isFactory then
+                        local fx, _, fz = Spring.GetUnitPosition(fid)
+                        local d = (fx - cx) ^ 2 + (fz - cz) ^ 2
+                        if not bestD or d < bestD then best, bestD = fid, d end
+                    end
+                end
+                if best then
+                    Spring.GiveOrderToUnit(uid, CMD_GUARD, { best }, 0)
+                end
+            end
+            break
+        end
+    end
+end
+
 local function parked(uid)
     -- parked = no orders, or loitering orders (guard/wait/patrol). Units the
     -- AI is actively moving/attacking with are left alone.
@@ -61,35 +89,122 @@ local function parked(uid)
     return id == CMD_GUARD or id == CMD_WAIT or id == CMD_PATROL
 end
 
+-- v3 "lane ownership": the base-zone-only sweep lost a tug-of-war — our
+-- push carried units OUT of the zone, the AI recalled them mid-journey
+-- (outside our reach), they returned, repeat. Ground/sea combat units are
+-- now monitored EVERYWHERE: idle, loitering in formation, or heading AWAY
+-- from the front gets re-ordered, unless actively fighting (enemy within
+-- 700) or one of the 8 garrison units nearest home. Air lanes keep the
+-- parked-at-base rule (sorties already work; returning flights must not be
+-- bounced).
+local AIR_TEAMS = { [6] = true, [7] = true }
+
+-- Factory foreman: production must not depend on AI sanity. Any factory
+-- whose build queue sits empty across two sweeps gets a small batch of
+-- lane-appropriate units queued by the game (broken instances ignore even
+-- gifted factories — seen live on USD-GOLD/USD-SP500).
+local SQUADS = {
+    land = { arm = { "armpw", "armrock", "armham", "armstump" },
+             cor = { "corak", "corstorm", "corthud", "corraid" } },
+    sea  = { arm = { "armpt", "armdecade", "armpship", "armroy" },
+             cor = { "corpt", "coresupp", "corpship", "corroy" } },
+    air  = { arm = { "armfig", "armthund", "armfig", "armpeep" },
+             cor = { "corveng", "corshad", "corveng", "corfink" } },
+}
+local ASSET_TEAMS = { [0] = true, [2] = true, [4] = true, [6] = true }
+local TEAM_KIND = { [0] = "land", [1] = "land", [2] = "sea", [3] = "sea",
+                    [4] = "sea", [5] = "sea", [6] = "air", [7] = "air" }
+local emptySince = {}   -- factory unitID -> first frame seen with empty queue
+
+local function foreman(teamID, f)
+    local kind = TEAM_KIND[teamID]
+    if not kind then return end
+    local squad = SQUADS[kind][ASSET_TEAMS[teamID] and "arm" or "cor"]
+    for _, uid in ipairs(Spring.GetTeamUnits(teamID)) do
+        local ud = UnitDefs[Spring.GetUnitDefID(uid)]
+        if ud and ud.isFactory then
+            local q = Spring.GetFactoryCommands(uid, 1)
+            if q and #q > 0 then
+                emptySince[uid] = nil
+            elseif not emptySince[uid] then
+                emptySince[uid] = f
+            elseif f - emptySince[uid] >= SWEEP_FRAMES then
+                emptySince[uid] = nil
+                for i = 1, 3 do
+                    local bd = UnitDefNames[squad[math.random(#squad)]]
+                    if bd and ud.buildOptions then
+                        -- only queue what this factory can actually build
+                        for _, bo in ipairs(ud.buildOptions) do
+                            if bo == bd.id then
+                                Spring.GiveOrderToUnit(uid, -bd.id, {}, 0)
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
 local function pushTeam(teamID, enemyPoint, f)
     local base = GG.MarketWar.startPos and GG.MarketWar.startPos[teamID]
     if not (base and enemyPoint) then return end
-    -- sea teams park their fleet offshore around the shipyard, well beyond
-    -- the land-base footprint — sweep a wider circle for them
-    local isSea = SEA_DROP[teamID] ~= nil
-    local radius = isSea and 2000 or BASE_RADIUS
-    local units = Spring.GetUnitsInCylinder(base.x, base.z, radius, teamID)
-    local eligible = {}
-    for _, uid in ipairs(units) do
-        -- sea lanes: CircuitAI holds fleets in ORDERED regroup formations, so
-        -- the parked() filter never catches the cluster — push everything in
-        -- the base zone regardless of orders. AI recalls just get re-pushed.
-        if isPushable[Spring.GetUnitDefID(uid)] and (isSea or parked(uid)) then
-            eligible[#eligible + 1] = uid
-        end
-    end
-    local excess = math.min(PUSH_MAX, #eligible - GARRISON)
-    if excess < 1 then return end
+    local ordered = 0
     local ey = Spring.GetGroundHeight(enemyPoint.x, enemyPoint.z)
-    for i = 1, excess do
-        local uid = eligible[i]
+    local function sendToFront(uid)
         Spring.GiveOrderToUnit(uid, CMD_FIGHT, {
             enemyPoint.x + math.random(-200, 200), ey,
             enemyPoint.z + math.random(-200, 200) }, 0)
+        ordered = ordered + 1
     end
-    Spring.SetGameRulesParam("mkt_push_frame", f)
-    Spring.SetGameRulesParam("mkt_push_team", teamID)
-    Spring.SetGameRulesParam("mkt_push_n", excess)
+
+    if false then   -- MKTWAR: air lanes now use lane-ownership too (below) —
+        -- ETH and USD-ETH must hunt EACH OTHER, not fly cover for allies;
+        -- rounds in the air lane should resolve like every other lane
+    else
+        local pushables = {}
+        for _, uid in ipairs(Spring.GetTeamUnits(teamID)) do
+            if isPushable[Spring.GetUnitDefID(uid)] then
+                local x, _, z = Spring.GetUnitPosition(uid)
+                if x then
+                    pushables[#pushables + 1] = {
+                        uid = uid,
+                        homeDist = math.sqrt((x - base.x) ^ 2 + (z - base.z) ^ 2),
+                        x = x, z = z,
+                    }
+                end
+            end
+        end
+        table.sort(pushables, function(a, b) return a.homeDist < b.homeDist end)
+        for i = GARRISON + 1, #pushables do
+            if ordered >= PUSH_MAX then break end
+            local u = pushables[i]
+            -- in combat: leave the micro alone (aircraft check wider)
+            if not Spring.GetUnitNearestEnemy(u.uid, AIR_TEAMS[teamID] and 1100 or 700, true) then
+                local dx, dz = enemyPoint.x - u.x, enemyPoint.z - u.z
+                local dist = math.sqrt(dx * dx + dz * dz)
+                if dist > 900 then
+                    local vx, _, vz = Spring.GetUnitVelocity(u.uid)
+                    local speed = math.sqrt((vx or 0) ^ 2 + (vz or 0) ^ 2)
+                    local dot = ((vx or 0) * dx + (vz or 0) * dz) / math.max(dist, 1)
+                    local cmds = Spring.GetUnitCommands(u.uid, 1)
+                    local idle = not cmds or #cmds == 0
+                    if idle
+                        or dot < -0.3            -- clearly heading AWAY from the front
+                        or (speed < 0.2 and dist > 1500) then  -- loitering formation mid-lane
+                        sendToFront(u.uid)
+                    end
+                end
+            end
+        end
+    end
+
+    if ordered > 0 then
+        Spring.SetGameRulesParam("mkt_push_frame", f)
+        Spring.SetGameRulesParam("mkt_push_team", teamID)
+        Spring.SetGameRulesParam("mkt_push_n", ordered)
+    end
 end
 
 function gadget:GameFrame(f)
@@ -101,6 +216,10 @@ function gadget:GameFrame(f)
             local uTgt = SEA_DROP[pr.asset] or (GG.MarketWar.startPos and GG.MarketWar.startPos[pr.asset])
             pushTeam(pr.asset, aTgt, f)
             pushTeam(pr.usd,   uTgt, f)
+            foreman(pr.asset, f)
+            foreman(pr.usd, f)
+            shepherd(pr.asset)
+            shepherd(pr.usd)
         end
     end
 end

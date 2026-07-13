@@ -45,25 +45,29 @@ end
 local lastReload = {}   -- teamID -> os.clock of last reload attempt
 local nextWatch = 0
 
-local prevReset = {}    -- teamID -> last seen mkt_reset frame
 local pendingReload = {} -- teamID -> game frame to reload at
 local pendingReport = {} -- teamID -> game frame to report recovery at
+local LANE_TEAMS = { btc = {0, 1}, spx = {2, 3}, gold = {4, 5}, eth = {6, 7} }
+
+-- called from eventLog when a round end is detected (the intermission param
+-- change — a signal PROVEN to fire; the old mkt_reset param path never did)
+function scheduleReactivation(laneKey)
+    local gf = Spring.GetGameFrame()
+    for _, teamID in ipairs(LANE_TEAMS[laneKey] or {}) do
+        -- intermission 10s + 30s settle after respawn
+        pendingReload[teamID] = gf + 40 * 30
+        pendingReport[teamID] = gf + 170 * 30
+    end
+end
 
 local function watchdog()
     local now = os.clock()
     local gf = Spring.GetGameFrame()
-    -- proactive reactivation: EVERY round reset reloads both pair AIs 20s
-    -- after their commanders respawn. Post-reset CircuitAI instances run in
-    -- a busy-but-broken state (eco errands, no production, ignore gifted
-    -- factories) that only a fresh init reliably clears; detection-based
-    -- reloading misses the busy cases.
+    -- proactive reactivation: EVERY round reset reloads both pair AIs after
+    -- their commanders respawn. Post-reset CircuitAI instances run in a
+    -- busy-but-broken state (eco errands, no production, ignore gifted
+    -- factories) that only a fresh init reliably clears.
     for teamID = 0, 7 do
-        local resetF = Spring.GetGameRulesParam("mkt_reset" .. teamID) or 0
-        if resetF > 0 and resetF ~= prevReset[teamID] then
-            prevReset[teamID] = resetF
-            pendingReload[teamID] = resetF + 20 * 30
-            pendingReport[teamID] = resetF + 150 * 30
-        end
         if pendingReload[teamID] and gf >= pendingReload[teamID] then
             pendingReload[teamID] = nil
             Spring.Echo("MKTWAR-REACTIVATE post-reset aireload team " .. teamID)
@@ -71,7 +75,7 @@ local function watchdog()
         end
         if pendingReport[teamID] and gf >= pendingReport[teamID] then
             pendingReport[teamID] = nil
-            Spring.Echo(string.format("MKTWAR-RECOVERY team=%d units=%d metal=%.0f (150s after reset)",
+            Spring.Echo(string.format("MKTWAR-RECOVERY team=%d units=%d metal=%.0f (170s after round end)",
                 teamID, Spring.GetTeamUnitCount(teamID) or 0,
                 Spring.GetTeamResources(teamID, "metal") or -1))
         end
@@ -130,6 +134,7 @@ local function eventLog()
         local inter = Spring.GetGameRulesParam("mkt_intermission_" .. l) or 0
         if inter > 0 and inter ~= prevInter[l] then
             prevInter[l] = inter
+            scheduleReactivation(l)
             Spring.Echo(string.format("MKTWAR-ROUND %s to team %d (wins now a=%d u=%d)", l,
                 Spring.GetGameRulesParam("mkt_roundwinner_" .. l) or -1,
                 Spring.GetGameRulesParam("mkt_wins" .. ({btc=0,spx=2,gold=4,eth=6})[l]) or 0,

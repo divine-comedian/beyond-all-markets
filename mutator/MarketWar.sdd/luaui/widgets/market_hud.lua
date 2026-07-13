@@ -205,10 +205,11 @@ function widget:DrawScreen()
         local ba, bu = basePos[l.asset], basePos[l.usd]
         if ba and bu then
             if l.corner then
-                -- one ticker at each back corner, pulled 6% beyond each base
-                -- toward its own map corner (asset NE corner, USD SW corner)
-                drawTicker(l, ba.x + 0.06 * Game.mapSizeX, ba.z - 0.04 * Game.mapSizeZ, 40 * s)
-                drawTicker(l, bu.x - 0.06 * Game.mapSizeX, bu.z + 0.04 * Game.mapSizeZ, 40 * s)
+                -- one ticker at each back corner near each base; offsets are
+                -- screen-tuned (NE ticker sits 11% south of its base, SW
+                -- ticker 6% north) so neither crowds the map edge
+                drawTicker(l, ba.x + 0.06 * Game.mapSizeX, ba.z + 0.11 * Game.mapSizeZ, 40 * s)
+                drawTicker(l, bu.x - 0.06 * Game.mapSizeX, bu.z - 0.06 * Game.mapSizeZ, 40 * s)
             else
                 local mx = (ba.x + bu.x) / 2 + (l.ox or 0) * Game.mapSizeX
                 local mz = (ba.z + bu.z) / 2 + (l.oz or 0) * Game.mapSizeZ

@@ -203,6 +203,26 @@ local function checkInsurance(f)
                 noFactorySince[teamID] = nil
             else
                 noFactorySince[teamID] = noFactorySince[teamID] or f
+                -- persistent enforcement: while factory-less, re-order the
+                -- commander to build the lane factory every check (survives
+                -- AI re-tasking, reloads, and wander-off eco shenanigans)
+                for _, uid in ipairs(Spring.GetTeamUnits(teamID)) do
+                    if isCommander[Spring.GetUnitDefID(uid)] then
+                        local fdef = UnitDefNames[defName]
+                        local fx, fz = insurePos(teamID)
+                        if fdef and fx then
+                            -- anti-thrash: skip if this build is already the
+                            -- commander's current order (re-issuing restarts
+                            -- pathing -> stop-start stutter)
+                            local cur = Spring.GetUnitCommands(uid, 1)
+                            if not (cur and cur[1] and cur[1].id == -fdef.id) then
+                                Spring.GiveOrderToUnit(uid, -fdef.id,
+                                    { fx, Spring.GetGroundHeight(fx, fz), fz, 0 }, 0)
+                            end
+                        end
+                        break
+                    end
+                end
                 if f - noFactorySince[teamID] >= INSURANCE_FRAMES then
                     local x, z = insurePos(teamID)
                     if x then

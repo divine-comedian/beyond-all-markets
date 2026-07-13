@@ -51,7 +51,7 @@ function gadget:GameFrame(f)
         -- team's bank always moves.
         local m = Spring.GetTeamResources(teamID, "metal") or 0
         local lb = lastBank[teamID]
-        if lb and m > 2000 and math.abs(m - lb.m) < 1 then
+        if lb and m > 2000 and math.abs(m - lb.m) < 25 then   -- MKTWAR: drops/conveyor trickle masked exact pegging
             stuck = true
         end
         lastBank[teamID] = { m = m, frame = f }
