@@ -25,34 +25,63 @@ local WHALE_COOLDOWN_SEC = 30         -- per side
 -- Lane pairs; whale = 1s volume bucket that triggers a deploy, in the
 -- market's native unit. Flank markets trade chunkier (fewer, bigger prints —
 -- measured ~28/min SPX, ~14/min GOLD), so their bars are set lower (~$15k)
--- than BTC's ($32k) to keep deploy cadence comparable across lanes.
+-- than BTC's ($32k). ETH parity with BTC (~$32k at ~$3.2k/ETH).
+-- lane kind decides squad composition AND spawn point: sea lanes drop ships
+-- IN their ocean (per-team deep-water coords from the heightmap), air lanes
+-- drop aircraft at base, land lanes drop the mixed ground squad at base.
 local PAIRS = {
-    { key = "btc",  mkt = "BTC",  asset = 0, usd = 1, whale = 0.5 },
-    { key = "spx",  mkt = "SPX",  asset = 2, usd = 3, whale = 2 },
-    { key = "gold", mkt = "GOLD", asset = 4, usd = 5, whale = 4 },
+    { key = "btc",  mkt = "BTC",  asset = 0, usd = 1, whale = 0.5, kind = "land" },
+    { key = "spx",  mkt = "SPX",  asset = 2, usd = 3, whale = 2,   kind = "sea" },
+    { key = "gold", mkt = "GOLD", asset = 4, usd = 5, whale = 4,   kind = "sea" },
+    { key = "eth",  mkt = "ETH",  asset = 6, usd = 7, whale = 10,  kind = "air" },
 }
 
--- Fixed squads by faction (assets = Armada, USD = Cortex; see gen-startscript.sh).
--- Roster-diverse: raiders + rockets + tank + plasma arty bot + radar bot.
-local SQUAD_ARM = { "armpw", "armpw", "armrock", "armham", "armstump", "armmark" }
-local SQUAD_COR = { "corak", "corak", "corstorm", "corthud", "corraid", "corvoyr" }
-local ASSET_TEAMS = { [0] = true, [2] = true, [4] = true }
+-- Deep-water drop points per sea team (from the map heightmap, ~-40..-70 depth)
+local SEA_DROP = {
+    [2] = { x = 6394, z = 1639 },   -- SP500, NW ocean
+    [3] = { x = 1818, z = 4667 },   -- USD-SP500, NW ocean
+    [4] = { x = 9832, z = 7117 },   -- GOLD, SE ocean
+    [5] = { x = 5813, z = 10633 },  -- USD-GOLD, SE ocean
+}
 
-local function squadFor(teamID, n)
-    local list, out = ASSET_TEAMS[teamID] and SQUAD_ARM or SQUAD_COR, {}
+-- Squads by lane kind and faction (assets = Armada, USD = Cortex).
+-- Healthy mixes: land = raiders/rockets/arty/tank/radar; sea = patrol boats,
+-- corvettes, missile ship, destroyer; air = fighters, bombers, scout.
+local SQUADS = {
+    land = {
+        arm = { "armpw", "armpw", "armrock", "armham", "armstump", "armmark" },
+        cor = { "corak", "corak", "corstorm", "corthud", "corraid", "corvoyr" },
+    },
+    sea = {
+        arm = { "armpt", "armpt", "armdecade", "armdecade", "armpship", "armroy" },
+        cor = { "corpt", "corpt", "coresupp", "coresupp", "corpship", "corroy" },
+    },
+    air = {
+        arm = { "armfig", "armfig", "armthund", "armthund", "armpeep", "armkam" },
+        cor = { "corveng", "corveng", "corshad", "corshad", "corfink", "corbw" },
+    },
+}
+local ASSET_TEAMS = { [0] = true, [2] = true, [4] = true, [6] = true }
+
+local function squadFor(pr, teamID, n)
+    local list = SQUADS[pr.kind][ASSET_TEAMS[teamID] and "arm" or "cor"]
+    local out = {}
     for i = 1, n do out[i] = list[(i - 1) % #list + 1] end
     return out
 end
 
 local function spawnSquad(pr, teamID, n, kind, f)
-    local sp = GG.MarketWar.startPos and GG.MarketWar.startPos[teamID]
+    local sp = (pr.kind == "sea" and SEA_DROP[teamID])
+        or (GG.MarketWar.startPos and GG.MarketWar.startPos[teamID])
     if not sp then return end
     local enemyTeam = (teamID == pr.asset) and pr.usd or pr.asset
-    local enemy = GG.MarketWar.startPos[enemyTeam]
+    local enemy = (pr.kind == "sea" and SEA_DROP[enemyTeam])
+        or (GG.MarketWar.startPos and GG.MarketWar.startPos[enemyTeam])
+    local scatter = pr.kind == "sea" and 250 or 160
     local spawned = 0
-    for _, defName in ipairs(squadFor(teamID, n)) do
-        local x = sp.x + math.random(-160, 160)
-        local z = sp.z + math.random(-160, 160)
+    for _, defName in ipairs(squadFor(pr, teamID, n)) do
+        local x = sp.x + math.random(-scatter, scatter)
+        local z = sp.z + math.random(-scatter, scatter)
         local y = Spring.GetGroundHeight(x, z)
         local uid = Spring.CreateUnit(defName, x, y, z, 0, teamID)
         if uid then

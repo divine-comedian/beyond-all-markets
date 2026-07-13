@@ -22,6 +22,7 @@ local PAIRS = {
     { key = "btc",  asset = 0, usd = 1 },
     { key = "spx",  asset = 2, usd = 3 },
     { key = "gold", asset = 4, usd = 5 },
+    { key = "eth",  asset = 6, usd = 7 },
 }
 local teamPair = {}   -- teamID -> pair
 for _, pr in ipairs(PAIRS) do

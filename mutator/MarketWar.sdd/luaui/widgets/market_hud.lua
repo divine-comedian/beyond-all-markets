@@ -10,18 +10,20 @@ function widget:GetInfo()
     }
 end
 
-local BUILD = "MW v6"
+local BUILD = "MW v7"
 
 -- Teams (match gen-startscript.sh)
 local TEAMNAME = {
     [0] = "BTC",  [1] = "USD-BTC",
     [2] = "SP500", [3] = "USD-SP500",
     [4] = "GOLD", [5] = "USD-GOLD",
+    [6] = "ETH",  [7] = "USD-ETH",
 }
 local TEAMCOL = {
     [0] = { 0.97, 0.58, 0.10 }, [1] = { 0.30, 0.69, 0.31 },
     [2] = { 0.25, 0.55, 0.95 }, [3] = { 0.15, 0.85, 0.60 },
     [4] = { 0.95, 0.80, 0.15 }, [5] = { 0.60, 0.85, 0.25 },
+    [6] = { 0.62, 0.40, 0.95 }, [7] = { 0.20, 0.60, 0.35 },
 }
 local UP    = { 0.20, 0.90, 0.30 }
 local DOWN  = { 0.95, 0.20, 0.20 }
@@ -34,12 +36,15 @@ local LANES = {
     { key = "spx",  mkt = "SPX",  asset = 2, usd = 3, label = "SP500", ox = -0.15, oz = -0.15 },
     { key = "btc",  mkt = "BTC",  asset = 0, usd = 1, label = "BTC",   ox = 0,     oz = 0 },
     { key = "gold", mkt = "GOLD", asset = 4, usd = 5, label = "GOLD",  ox = 0.15,  oz = 0.15 },
+    -- corner=true: the ETH lane spans corner to corner, so its ticker renders
+    -- at BOTH back corners (near each base) instead of the cluttered middle
+    { key = "eth",  mkt = "ETH",  asset = 6, usd = 7, label = "ETH", corner = true },
 }
 
 local VOL_CAP    = 5                  -- full-scale pulse (BTC-equivalent notional units)
 local PULSE_LIFE = 2.2
 local WHALE_ROWS = 6
-local WHALE_MIN  = { BTC = 0.10, SPX = 0.8, GOLD = 1.6 }   -- ~$6.4k notional each
+local WHALE_MIN  = { BTC = 0.10, SPX = 0.8, GOLD = 1.6, ETH = 2.0 }   -- ~$6.4k notional each
 
 local basePos   = {}                  -- teamID -> {x,y,z}
 local pulses    = {}                  -- {team, metal, energy, vol, born}
@@ -88,7 +93,7 @@ function widget:Shutdown()
 end
 
 local function refreshBases()
-    for team = 0, 5 do
+    for team = 0, 7 do
         if not basePos[team] then
             local x, y, z = Spring.GetTeamStartPosition(team)
             if x and x > 0 then basePos[team] = { x = x, y = y, z = z } end
@@ -177,30 +182,40 @@ function widget:DrawScreen()
     local frame = Spring.GetGameFrame()
 
     ---------------------------------------------------------------- lane tickers (world-anchored)
+    local function drawTicker(l, mx, mz, size)
+        local gy = Spring.GetGroundHeight(mx, mz) or 0
+        local px, py, pz = Spring.WorldToScreenCoords(mx, math.max(gy, 0) + 500, mz)
+        if not (pz and pz < 1) then return end
+        local flash = math.max(0, 1 - (now - l.tickAt) / 0.8)
+        local target = l.tickDir > 0 and UP or DOWN
+        local pc = {
+            WHITE[1] + (target[1] - WHITE[1]) * flash,
+            WHITE[2] + (target[2] - WHITE[2]) * flash,
+            WHITE[3] + (target[3] - WHITE[3]) * flash,
+        }
+        gl.Color(pc[1], pc[2], pc[3], 0.55 + 0.45 * flash)
+        gl.Text(string.format("%s $%.1f", l.label, l.lastPrice), px, py + 26 * s, size, "co")
+        gl.Text(string.format("%+.3f%% 1m", lanePct60(l)), px, py + 2 * s, 20 * s, "co")
+    end
+
     for _, l in ipairs(LANES) do
         local ba, bu = basePos[l.asset], basePos[l.usd]
         if ba and bu then
-            local mx = (ba.x + bu.x) / 2 + (l.ox or 0) * Game.mapSizeX
-            local mz = (ba.z + bu.z) / 2 + (l.oz or 0) * Game.mapSizeZ
-            local gy = Spring.GetGroundHeight(mx, mz) or 0
-            local px, py, pz = Spring.WorldToScreenCoords(mx, math.max(gy, 0) + 500, mz)
-            if pz and pz < 1 then
-                local flash = math.max(0, 1 - (now - l.tickAt) / 0.8)
-                local target = l.tickDir > 0 and UP or DOWN
-                local pc = {
-                    WHITE[1] + (target[1] - WHITE[1]) * flash,
-                    WHITE[2] + (target[2] - WHITE[2]) * flash,
-                    WHITE[3] + (target[3] - WHITE[3]) * flash,
-                }
-                gl.Color(pc[1], pc[2], pc[3], 0.55 + 0.45 * flash)
-                gl.Text(string.format("%s $%.1f", l.label, l.lastPrice), px, py + 26 * s, 48 * s, "co")
-                gl.Text(string.format("%+.3f%% 1m", lanePct60(l)), px, py + 2 * s, 20 * s, "co")
+            if l.corner then
+                -- one ticker at each back corner, pulled 6% beyond each base
+                -- toward its own map corner (asset NE corner, USD SW corner)
+                drawTicker(l, ba.x + 0.06 * Game.mapSizeX, ba.z - 0.04 * Game.mapSizeZ, 40 * s)
+                drawTicker(l, bu.x - 0.06 * Game.mapSizeX, bu.z + 0.04 * Game.mapSizeZ, 40 * s)
+            else
+                local mx = (ba.x + bu.x) / 2 + (l.ox or 0) * Game.mapSizeX
+                local mz = (ba.z + bu.z) / 2 + (l.oz or 0) * Game.mapSizeZ
+                drawTicker(l, mx, mz, 48 * s)
             end
         end
     end
 
     ---------------------------------------------------------------- base labels + income pulses
-    for team = 0, 5 do
+    for team = 0, 7 do
         local bp = basePos[team]
         if bp then
             local sx, sy = screenPos(bp, 120)
@@ -232,7 +247,7 @@ function widget:DrawScreen()
 
     ---------------------------------------------------------------- per-lane scoreboards (top center)
     local sbY = vsy - 36 * s
-    local sbX = { vsx / 2 - 300 * s, vsx / 2, vsx / 2 + 300 * s }
+    local sbX = { vsx / 2 - 420 * s, vsx / 2 - 140 * s, vsx / 2 + 140 * s, vsx / 2 + 420 * s }
     for i, l in ipairs(LANES) do
         local wa, wu = getP("mkt_wins" .. l.asset), getP("mkt_wins" .. l.usd)
         local ca, cu = TEAMCOL[l.asset], TEAMCOL[l.usd]

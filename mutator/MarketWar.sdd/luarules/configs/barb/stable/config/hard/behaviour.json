@@ -10,9 +10,9 @@
 	"quota": {
 		"scout": 2,  // max scout units out of raiders
 		"raid": [2.0, 35.0],  // MKTWAR v2 was [6.0, 150.0] — tiny, relentless raids
-		"attack": 8.0,  // MKTWAR v2 was 60 — stream everything, park nothing
+		"attack": 4.0,  // MKTWAR v3 was 60 — any handful of units is an attack group
 		"thr_mod": {				//AI attacks everything with final threat (after all calculations) <= 1
-			"attack": [0.25, 0.3],  // MKTWAR v2: the config comments' original "org" values — fearless targeting for target selection of attack task |  values <1 makes enemy group seem less of an thread for ai => ai attacks stronger groups than it own | org=0.25, 0.3
+			"attack": [0.10, 0.15],  // MKTWAR v3: huge enemy blobs are still valid targets — no target means hoarding for target selection of attack task |  values <1 makes enemy group seem less of an thread for ai => ai attacks stronger groups than it own | org=0.25, 0.3
 			"defence": [0.3, 0.5],  // [<min>, <max>] enemy threat modifier for group size calculation of defence task; org=0.95, 0.95 | high values = low risk; low values = high risk 
 			"mobile": 0.7,  // MKTWAR was 1.0 — push into mobile armies
 			"static": 0.5,  // MKTWAR was 1.0 — chokepoint porc must not stall the whole army
@@ -37,11 +37,11 @@
 	//to disable, set end_scale_value to 1.0
 	"adaptive_threat_range": {
 		//how many units it takes on the field per team to start scaling down our threat range
-		"enemy_count_per_team_to_start_scaling": 90,
+		"enemy_count_per_team_to_start_scaling": 60,  // MKTWAR was 90
 		//how many units it takes on the field per team to reach the max scaling of end_scale_value
 		"enemy_count_per_team_to_end_scaling": 350,
 		//how far down it scales the threat range once reaching enemy_count_per_team_to_end_scaling
-		"end_scale_value": 0.5  // 0.4
+		"end_scale_value": 0.3  // MKTWAR was 0.5
 	},
 
     // If unit's health drops below specified percent it will retreat

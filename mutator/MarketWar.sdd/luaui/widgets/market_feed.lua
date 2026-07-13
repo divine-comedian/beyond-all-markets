@@ -49,7 +49,7 @@ local function watchdog()
     local now = os.clock()
     if now < nextWatch then return end
     nextWatch = now + 10
-    for teamID = 0, 5 do
+    for teamID = 0, 7 do
         if (Spring.GetGameRulesParam("mkt_stuck" .. teamID) or 0) == 1
             and now - (lastReload[teamID] or -math.huge) > 120 then
             lastReload[teamID] = now
@@ -66,8 +66,34 @@ local LANES_HB = {
     { key = "BTC",  asset = 0, usd = 1 },
     { key = "SPX",  asset = 2, usd = 3 },
     { key = "GOLD", asset = 4, usd = 5 },
+    { key = "ETH",  asset = 6, usd = 7 },
 }
 local lastHeartbeat = -1
+local prevDrop = 0
+local prevInter = {}
+
+-- Event telemetry (host infolog only): synced gadgets can't log without
+-- painting spectator consoles, so the host watches the rules params instead.
+local function eventLog()
+    local dropF = Spring.GetGameRulesParam("mkt_drop_frame") or 0
+    if dropF > 0 and dropF ~= prevDrop then
+        prevDrop = dropF
+        Spring.Echo(string.format("MKTWAR-DROP f=%d team=%d n=%d kind=%d", dropF,
+            Spring.GetGameRulesParam("mkt_drop_team") or -1,
+            Spring.GetGameRulesParam("mkt_drop_n") or 0,
+            Spring.GetGameRulesParam("mkt_drop_kind") or 0))
+    end
+    for _, l in ipairs({ "btc", "spx", "gold", "eth" }) do
+        local inter = Spring.GetGameRulesParam("mkt_intermission_" .. l) or 0
+        if inter > 0 and inter ~= prevInter[l] then
+            prevInter[l] = inter
+            Spring.Echo(string.format("MKTWAR-ROUND %s to team %d (wins now a=%d u=%d)", l,
+                Spring.GetGameRulesParam("mkt_roundwinner_" .. l) or -1,
+                Spring.GetGameRulesParam("mkt_wins" .. ({btc=0,spx=2,gold=4,eth=6})[l]) or 0,
+                Spring.GetGameRulesParam("mkt_wins" .. ({btc=1,spx=3,gold=5,eth=7})[l]) or 0))
+        end
+    end
+end
 
 local function heartbeat()
     local f = Spring.GetGameFrame()
@@ -93,6 +119,7 @@ end
 function widget:Update()
     watchdog()
     heartbeat()
+    eventLog()
     if not client then
         local now = os.clock()
         if now >= retryAt then

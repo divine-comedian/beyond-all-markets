@@ -30,7 +30,7 @@ cat > "$DATA_DIR/script.txt" <<EOF
     AutohostPort=8453;
     MyPlayerName=Warhost;
     NumPlayers=1;
-    NumTeams=6;
+    NumTeams=8;
     NumAllyTeams=2;
     StartPosType=3;
     [MODOPTIONS]
@@ -51,12 +51,16 @@ cat > "$DATA_DIR/script.txt" <<EOF
     [AI3] { Name=USD-SP500; ShortName=BARb; Host=0; Team=3; [OPTIONS] { disabledunits=$AI_DISABLED_UNITS_FLANK; } }
     [AI4] { Name=GOLD;      ShortName=BARb; Host=0; Team=4; [OPTIONS] { disabledunits=$AI_DISABLED_UNITS_FLANK; } }
     [AI5] { Name=USD-GOLD;  ShortName=BARb; Host=0; Team=5; [OPTIONS] { disabledunits=$AI_DISABLED_UNITS_FLANK; } }
+    [AI6] { Name=ETH;       ShortName=BARb; Host=0; Team=6; [OPTIONS] { disabledunits=$AI_DISABLED_UNITS_AIR; } }
+    [AI7] { Name=USD-ETH;   ShortName=BARb; Host=0; Team=7; [OPTIONS] { disabledunits=$AI_DISABLED_UNITS_AIR; } }
     [TEAM0] { TeamLeader=0; AllyTeam=0; Side=Armada; StartPosX=7600;  StartPosZ=4900;  RgbColor=0.97 0.58 0.10; }
     [TEAM1] { TeamLeader=0; AllyTeam=1; Side=Cortex; StartPosX=4600;  StartPosZ=7400;  RgbColor=0.30 0.69 0.31; }
     [TEAM2] { TeamLeader=0; AllyTeam=0; Side=Armada; StartPosX=7400;  StartPosZ=1200;  RgbColor=0.25 0.55 0.95; }
-    [TEAM3] { TeamLeader=0; AllyTeam=1; Side=Cortex; StartPosX=730;   StartPosZ=7300;  RgbColor=0.15 0.85 0.60; }
-    [TEAM4] { TeamLeader=0; AllyTeam=0; Side=Armada; StartPosX=11600; StartPosZ=5000;  RgbColor=0.95 0.80 0.15; }
+    [TEAM3] { TeamLeader=0; AllyTeam=1; Side=Cortex; StartPosX=1150;  StartPosZ=5400;  RgbColor=0.15 0.85 0.60; }
+    [TEAM4] { TeamLeader=0; AllyTeam=0; Side=Armada; StartPosX=10530; StartPosZ=5606;  RgbColor=0.95 0.80 0.15; }
     [TEAM5] { TeamLeader=0; AllyTeam=1; Side=Cortex; StartPosX=4800;  StartPosZ=11100; RgbColor=0.60 0.85 0.25; }
+    [TEAM6] { TeamLeader=0; AllyTeam=0; Side=Armada; StartPosX=10150; StartPosZ=600;   RgbColor=0.62 0.40 0.95; }
+    [TEAM7] { TeamLeader=0; AllyTeam=1; Side=Cortex; StartPosX=2200;  StartPosZ=11750; RgbColor=0.20 0.60 0.35; }
     [ALLYTEAM0] { NumAllies=0; }
     [ALLYTEAM1] { NumAllies=0; }
 }

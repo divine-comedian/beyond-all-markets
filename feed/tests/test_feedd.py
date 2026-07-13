@@ -67,7 +67,7 @@ def test_legacy_lines_match_v1_format():
 
 def test_new_buckets_covers_all_markets():
     bs = new_buckets()
-    assert set(bs.keys()) == set(MARKETS) == {"BTC", "GOLD", "SPX"}
+    assert set(bs.keys()) == set(MARKETS) == {"BTC", "ETH", "GOLD", "SPX"}
 
 
 def test_route_binance_aggtrade_to_right_market():
@@ -89,7 +89,14 @@ def test_route_binance_bookticker_sets_mid_price_only():
 
 def test_route_binance_ignores_unknown_stream():
     bs = new_buckets()
-    assert route_binance({"stream": "ethusdt@aggTrade", "data": {"m": True, "q": "1", "p": "1"}}, bs) is None
+    assert route_binance({"stream": "dogeusdt@aggTrade", "data": {"m": True, "q": "1", "p": "1"}}, bs) is None
+
+
+def test_route_binance_eth_owns_its_price():
+    bs = new_buckets()
+    hit = route_binance({"stream": "ethusdt@aggTrade", "data": {"m": False, "q": "2.0", "p": "3201.5"}}, bs)
+    assert hit == ("ETH", False, 2.0, 3201.5)
+    assert bs["ETH"]["buy"] == 2.0 and bs["ETH"]["price"] == 3201.5
 
 
 def test_paxg_never_overwrites_hyperliquid_gold_price():

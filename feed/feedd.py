@@ -27,14 +27,14 @@ import math
 import random
 
 BINANCE_COMBINED = ("wss://stream.binance.com:9443/stream?streams="
-                    "btcusdt@aggTrade/paxgusdt@aggTrade/"
-                    "btcusdt@bookTicker/paxgusdt@bookTicker")
+                    "btcusdt@aggTrade/ethusdt@aggTrade/paxgusdt@aggTrade/"
+                    "btcusdt@bookTicker/ethusdt@bookTicker/paxgusdt@bookTicker")
 COINBASE_WS = "wss://ws-feed.exchange.coinbase.com"
 HYPERLIQUID_WS = "wss://api.hyperliquid.xyz/ws"
 BYBIT_WS = "wss://stream.bybit.com/v5/public/spot"
 
-MARKETS = ("BTC", "GOLD", "SPX")
-BINANCE_SYMBOL_MKT = {"btcusdt": "BTC", "paxgusdt": "GOLD"}
+MARKETS = ("BTC", "ETH", "GOLD", "SPX")
+BINANCE_SYMBOL_MKT = {"btcusdt": "BTC", "ethusdt": "ETH", "paxgusdt": "GOLD"}
 HL_COIN_MKT = {"xyz:SP500": "SPX", "xyz:GOLD": "GOLD"}
 HL_PRICE_OWNER = {"SPX": True, "GOLD": True}   # Hyperliquid owns these prices
 # Bybit xStocks/RWA spot: extra volume for the thin flank markets.
@@ -330,8 +330,8 @@ class FeedStats:
         self.counts, self.notional = {}, {}
 
 
-SYN_START = {"BTC": 64000.0, "GOLD": 4100.0, "SPX": 6500.0}
-SYN_RATE = {"BTC": 8, "GOLD": 20, "SPX": 0.02}   # expovariate lambda per market
+SYN_START = {"BTC": 64000.0, "ETH": 3200.0, "GOLD": 4100.0, "SPX": 6500.0}
+SYN_RATE = {"BTC": 8, "ETH": 2, "GOLD": 20, "SPX": 0.02}   # expovariate lambda per market
 
 
 async def synthetic_trades(buckets, bc, throttle, legacy):

@@ -17,6 +17,7 @@ local PAIRS = {
     BTC  = { asset = 0, usd = 1, m = 400, e = 4000 },
     SPX  = { asset = 2, usd = 3, m = 47,  e = 470 },
     GOLD = { asset = 4, usd = 5, m = 25,  e = 250 },
+    ETH  = { asset = 6, usd = 7, m = 11,  e = 110 },   -- ETH ~$1.8k (live-checked), not $3.2k
 }
 local BASELINE_METAL  = 6
 local BASELINE_ENERGY = 60

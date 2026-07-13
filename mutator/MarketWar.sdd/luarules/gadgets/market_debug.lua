@@ -14,7 +14,7 @@ end
 
 if not gadgetHandler:IsSyncedCode() then return end
 
-local TEAMS = { 0, 1, 2, 3, 4, 5 }
+local TEAMS = { 0, 1, 2, 3, 4, 5, 6, 7 }
 local stuckSince = {}   -- teamID -> frame the stuck pattern was first seen
 
 function gadget:GameFrame(f)
