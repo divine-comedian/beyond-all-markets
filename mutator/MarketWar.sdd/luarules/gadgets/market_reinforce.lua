@@ -40,7 +40,7 @@ local PAIRS = {
 local SEA_DROP = {
     [2] = { x = 6394, z = 1639 },   -- SP500, NW ocean
     [3] = { x = 1818, z = 4667 },   -- USD-SP500, NW ocean
-    [4] = { x = 9832, z = 7117 },   -- GOLD, SE ocean
+    [4] = { x = 10695, z = 9952 },  -- GOLD, SE ocean (base on the SE coastline)
     [5] = { x = 6800, z = 11000 },  -- USD-GOLD, SE ocean (base at south edge)
 }
 
@@ -87,8 +87,17 @@ local function spawnSquad(pr, teamID, n, kind, f)
         if uid then
             spawned = spawned + 1
             if enemy then
-                Spring.GiveOrderToUnit(uid, CMD.FIGHT,
-                    { enemy.x, Spring.GetGroundHeight(enemy.x, enemy.z), enemy.z }, 0)
+                if pr.kind == "land" then
+                    -- funnel through the isthmus choke (see market_conveyor)
+                    local wx, wz = 6100 + math.random(-250, 250), 6150 + math.random(-250, 250)
+                    Spring.GiveOrderToUnit(uid, CMD.FIGHT,
+                        { wx, Spring.GetGroundHeight(wx, wz), wz }, 0)
+                    Spring.GiveOrderToUnit(uid, CMD.FIGHT,
+                        { enemy.x, Spring.GetGroundHeight(enemy.x, enemy.z), enemy.z }, { "shift" })
+                else
+                    Spring.GiveOrderToUnit(uid, CMD.FIGHT,
+                        { enemy.x, Spring.GetGroundHeight(enemy.x, enemy.z), enemy.z }, 0)
+                end
             end
         end
     end

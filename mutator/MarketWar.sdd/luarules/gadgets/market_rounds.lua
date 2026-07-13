@@ -39,11 +39,11 @@ local isFactory    = {}   -- unitDefID -> true
 -- SP500 retreated inland where no shipyard placement exists and all its land
 -- factories are banned). If a team has NO factory for 120s mid-round, the
 -- game plants the lane-appropriate one and the AI adopts it.
-local INSURANCE_FRAMES = 120 * 30
+local INSURANCE_FRAMES = 45 * 30   -- MKTWAR: was 120s — a full bank with no factory is dead air (seen on BTC)
 local SEA_DROP = {   -- deep water per sea team (mirror market_conveyor.lua)
     [2] = { x = 6394, z = 1639 },
     [3] = { x = 1818, z = 4667 },
-    [4] = { x = 9832, z = 7117 },
+    [4] = { x = 10695, z = 9952 },  -- SE coastline
     [5] = { x = 6800, z = 11000 },
 }
 local INSURE_DEF = {  -- teamID -> factory unitdef name
@@ -102,6 +102,52 @@ local function nukeVisual(p)
     end
 end
 
+function endRound(pr, winner)
+    pr.active = false
+    GG.MarketWar.roundActive[pr.key] = false
+    pr.wins[winner] = pr.wins[winner] + 1
+    local f = Spring.GetGameFrame()
+    pr.pendingWipe  = f + CATACLYSM_DELAY
+    pr.pendingSpawn = f + INTERMISSION_FRAMES
+    Spring.SetGameRulesParam("mkt_wins" .. winner, pr.wins[winner])
+    Spring.SetGameRulesParam("mkt_roundwinner_" .. pr.key, winner)
+    Spring.SetGameRulesParam("mkt_intermission_" .. pr.key, pr.pendingSpawn)
+    Spring.Log("MKTWAR", "info", string.format("ROUND %s: round %d to team %d (%d-%d)",
+        pr.key, pr.round, winner, pr.wins[pr.asset], pr.wins[pr.usd]))
+end
+
+-- Mercy rule: sea lanes (and any unreachable-commander case) can deadlock —
+-- a fled inland commander cannot be killed by a navy, so the round would
+-- never resolve. One side at <=2 units vs >=25 for 3 continuous minutes is
+-- a decided round: score it, nuke it, reset it. Referee logic only — no AI
+-- unit is ever touched.
+local MERCY_FRAMES = 180 * 30
+local mercySince = {}   -- pair key -> frame the lopsided state started
+
+local function checkMercy(f)
+    for _, pr in ipairs(PAIRS) do
+        if pr.active then
+            local ca = Spring.GetTeamUnitCount(pr.asset) or 0
+            local cu = Spring.GetTeamUnitCount(pr.usd) or 0
+            local winner
+            if ca <= 2 and cu >= 25 then winner = pr.usd end
+            if cu <= 2 and ca >= 25 then winner = pr.asset end
+            if winner then
+                mercySince[pr.key] = mercySince[pr.key] or f
+                if f - mercySince[pr.key] >= MERCY_FRAMES then
+                    mercySince[pr.key] = nil
+                    Spring.Log("MKTWAR", "info", "MERCY " .. pr.key .. " decided for team " .. winner)
+                    endRound(pr, winner)
+                end
+            else
+                mercySince[pr.key] = nil
+            end
+        else
+            mercySince[pr.key] = nil
+        end
+    end
+end
+
 function gadget:UnitDestroyed(unitID, unitDefID, unitTeam)
     local pr = teamPair[unitTeam]
     if not pr or not pr.active then return end
@@ -114,17 +160,7 @@ function gadget:UnitDestroyed(unitID, unitDefID, unitTeam)
     end
     -- lane semantics: the pair OPPONENT scores, whoever landed the kill
     local killer = (unitTeam == pr.asset) and pr.usd or pr.asset
-    pr.active = false
-    GG.MarketWar.roundActive[pr.key] = false
-    pr.wins[killer] = pr.wins[killer] + 1
-    local f = Spring.GetGameFrame()
-    pr.pendingWipe  = f + CATACLYSM_DELAY
-    pr.pendingSpawn = f + INTERMISSION_FRAMES
-    Spring.SetGameRulesParam("mkt_wins" .. killer, pr.wins[killer])
-    Spring.SetGameRulesParam("mkt_roundwinner_" .. pr.key, killer)
-    Spring.SetGameRulesParam("mkt_intermission_" .. pr.key, pr.pendingSpawn)
-    Spring.Log("MKTWAR", "info", string.format("ROUND %s: round %d to team %d (%d-%d)",
-        pr.key, pr.round, killer, pr.wins[pr.asset], pr.wins[pr.usd]))
+    endRound(pr, killer)
 end
 
 local function wipePair(pr)
@@ -250,5 +286,8 @@ function gadget:GameFrame(f)
             startRound(pr)
         end
     end
-    if f % 300 == 0 then checkInsurance(f) end
+    if f % 300 == 0 then
+        checkInsurance(f)
+        checkMercy(f)
+    end
 end

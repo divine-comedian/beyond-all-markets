@@ -16,7 +16,7 @@ end
 
 if not gadgetHandler:IsSyncedCode() then return end
 
-local SWEEP_FRAMES = 10 * 30   -- push cadence (fast: our orders must win the tug-of-war vs AI recalls)
+local SWEEP_FRAMES = 5 * 30    -- push cadence: recalled units are re-pushed within 5s — forward progress must dominate the AI tug-of-war
 local BASE_RADIUS  = 1100      -- "parked near base" cylinder
 local GARRISON     = 8         -- units left home per team
 local PUSH_MAX     = 30        -- cap per sweep so pushes read as waves
@@ -26,7 +26,7 @@ local PUSH_MAX     = 30        -- cap per sweep so pushes read as waves
 local SEA_DROP = {
     [2] = { x = 6394, z = 1639 },   -- SP500, NW ocean
     [3] = { x = 1818, z = 4667 },   -- USD-SP500, NW ocean
-    [4] = { x = 9832, z = 7117 },   -- GOLD, SE ocean
+    [4] = { x = 10695, z = 9952 },  -- GOLD, SE ocean (base on the SE coastline)
     [5] = { x = 6800, z = 11000 },  -- USD-GOLD, SE ocean (base at south edge)
 }
 local PAIRS = {
@@ -50,7 +50,7 @@ function gadget:Initialize()
     end
 end
 
-local CMD_FIGHT, CMD_GUARD, CMD_WAIT, CMD_PATROL = CMD.FIGHT, CMD.GUARD, CMD.WAIT, CMD.PATROL
+local CMD_FIGHT, CMD_GUARD, CMD_WAIT, CMD_PATROL, CMD_ATTACK = CMD.FIGHT, CMD.GUARD, CMD.WAIT, CMD.PATROL, CMD.ATTACK
 
 -- Commander shepherd: broken/reloaded AI instances leave commanders standing
 -- idle for long stretches (worst on air/sea lanes). An idle commander is
@@ -147,15 +147,32 @@ local function foreman(teamID, f)
     end
 end
 
+-- Mid-lane funnel: engine pathing routes each side's shortest path along a
+-- different coast of the isthmus, and under fog (+jammers) the two streams
+-- pass each other unseen. Ground units are routed VIA the choke point so
+-- the armies meet head-on in the middle.
+local FUNNEL = { [0] = { x = 6100, z = 6150 }, [1] = { x = 6100, z = 6150 } }
+
 local function pushTeam(teamID, enemyPoint, f)
     local base = GG.MarketWar.startPos and GG.MarketWar.startPos[teamID]
     if not (base and enemyPoint) then return end
     local ordered = 0
     local ey = Spring.GetGroundHeight(enemyPoint.x, enemyPoint.z)
+    local funnel = FUNNEL[teamID]
     local function sendToFront(uid)
-        Spring.GiveOrderToUnit(uid, CMD_FIGHT, {
-            enemyPoint.x + math.random(-200, 200), ey,
-            enemyPoint.z + math.random(-200, 200) }, 0)
+        if funnel then
+            local wx = funnel.x + math.random(-250, 250)
+            local wz = funnel.z + math.random(-250, 250)
+            Spring.GiveOrderToUnit(uid, CMD_FIGHT,
+                { wx, Spring.GetGroundHeight(wx, wz), wz }, 0)
+            Spring.GiveOrderToUnit(uid, CMD_FIGHT, {
+                enemyPoint.x + math.random(-200, 200), ey,
+                enemyPoint.z + math.random(-200, 200) }, { "shift" })
+        else
+            Spring.GiveOrderToUnit(uid, CMD_FIGHT, {
+                enemyPoint.x + math.random(-200, 200), ey,
+                enemyPoint.z + math.random(-200, 200) }, 0)
+        end
         ordered = ordered + 1
     end
 
@@ -184,15 +201,27 @@ local function pushTeam(teamID, enemyPoint, f)
             if not Spring.GetUnitNearestEnemy(u.uid, AIR_TEAMS[teamID] and 1100 or 700, true) then
                 local dx, dz = enemyPoint.x - u.x, enemyPoint.z - u.z
                 local dist = math.sqrt(dx * dx + dz * dz)
+                local vx, _, vz = Spring.GetUnitVelocity(u.uid)
+                local speed = math.sqrt((vx or 0) ^ 2 + (vz or 0) ^ 2)
+                local cmds = Spring.GetUnitCommands(u.uid, 1)
+                local idle = not cmds or #cmds == 0
                 if dist > 900 then
-                    local vx, _, vz = Spring.GetUnitVelocity(u.uid)
-                    local speed = math.sqrt((vx or 0) ^ 2 + (vz or 0) ^ 2)
                     local dot = ((vx or 0) * dx + (vz or 0) * dz) / math.max(dist, 1)
-                    local cmds = Spring.GetUnitCommands(u.uid, 1)
-                    local idle = not cmds or #cmds == 0
                     if idle
                         or dot < -0.3            -- clearly heading AWAY from the front
                         or (speed < 0.2 and dist > 1500) then  -- loitering formation mid-lane
+                        sendToFront(u.uid)
+                    end
+                elseif idle or speed < 0.2 then
+                    -- HUNTER: arrived at the front but passive — fight-move
+                    -- never engages what it can't see, so units wander around
+                    -- enemy troops and commanders. Explicit ATTACK on the
+                    -- nearest enemy, or a fresh sweep hop if none in range.
+                    local foe = Spring.GetUnitNearestEnemy(u.uid, 2500, true)
+                    if foe then
+                        Spring.GiveOrderToUnit(u.uid, CMD_ATTACK, { foe }, 0)
+                        ordered = ordered + 1
+                    elseif idle then
                         sendToFront(u.uid)
                     end
                 end
