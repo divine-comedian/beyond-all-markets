@@ -27,7 +27,7 @@ local SEA_DROP = {
     [2] = { x = 6394, z = 1639 },   -- SP500, NW ocean
     [3] = { x = 1818, z = 4667 },   -- USD-SP500, NW ocean
     [4] = { x = 9832, z = 7117 },   -- GOLD, SE ocean
-    [5] = { x = 5813, z = 10633 },  -- USD-GOLD, SE ocean
+    [5] = { x = 6800, z = 11000 },  -- USD-GOLD, SE ocean (base at south edge)
 }
 local PAIRS = {
     { key = "btc",  asset = 0, usd = 1 },

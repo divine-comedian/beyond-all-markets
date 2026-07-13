@@ -16,18 +16,34 @@ if not gadgetHandler:IsSyncedCode() then return end
 
 local TEAMS = { 0, 1, 2, 3, 4, 5, 6, 7 }
 local stuckSince = {}   -- teamID -> frame the stuck pattern was first seen
+local isCommander, isFactory = {}, {}
+
+function gadget:Initialize()
+    for udid, ud in pairs(UnitDefs) do
+        if ud.customParams and ud.customParams.iscommander then isCommander[udid] = true end
+        if ud.isFactory then isFactory[udid] = true end
+    end
+end
 
 function gadget:GameFrame(f)
     if f % 300 ~= 0 then return end
     for _, teamID in ipairs(TEAMS) do
-        -- a solitary idle commander for 60s+ means the CircuitAI instance
-        -- silently failed (observed init race with 6 concurrent instances)
-        local units = Spring.GetTeamUnits(teamID)
+        -- catatonia = the team's commander is order-less AND it owns no
+        -- factory, sustained 60s. Unit COUNT is irrelevant: drops/conveyor
+        -- keep handing limp teams units, which masked the old ==1 check
+        -- after round resets. A healthy AI always tasks its commander or
+        -- has production standing.
         local stuck = false
-        if #units == 1 and units[1] then
-            local cmds = Spring.GetUnitCommandCount and Spring.GetUnitCommandCount(units[1]) or 0
-            if cmds == 0 then stuck = true end
+        local hasFactory, commIdle = false, false
+        for _, uid in ipairs(Spring.GetTeamUnits(teamID)) do
+            local defID = Spring.GetUnitDefID(uid)
+            if isFactory[defID] then hasFactory = true; break end
+            if isCommander[defID] then
+                local cmds = Spring.GetUnitCommandCount and Spring.GetUnitCommandCount(uid) or 0
+                commIdle = (cmds == 0)
+            end
         end
+        stuck = commIdle and not hasFactory
         if stuck then
             stuckSince[teamID] = stuckSince[teamID] or f
         else

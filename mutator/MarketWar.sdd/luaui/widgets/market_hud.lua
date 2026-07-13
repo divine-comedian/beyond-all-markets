@@ -10,7 +10,7 @@ function widget:GetInfo()
     }
 end
 
-local BUILD = "MW v7"
+local BUILD = "MW v8"
 
 -- Teams (match gen-startscript.sh)
 local TEAMNAME = {
@@ -245,20 +245,37 @@ function widget:DrawScreen()
         end
     end
 
-    ---------------------------------------------------------------- per-lane scoreboards (top center)
-    local sbY = vsy - 36 * s
-    local sbX = { vsx / 2 - 420 * s, vsx / 2 - 140 * s, vsx / 2 + 140 * s, vsx / 2 + 420 * s }
-    for i, l in ipairs(LANES) do
+    ---------------------------------------------------------------- round tracker (left panel)
+    -- structured panel, plain ASCII only (multibyte glyphs render unreliably
+    -- in the default font — suspected cause of the old scoreboard's fragments)
+    local rtW = 250 * s
+    local rtX = 14 * s
+    local rtTop = vsy * 0.78
+    local rowH = 24 * s
+    gl.Color(0, 0, 0, 0.5)
+    gl.Rect(rtX - 8 * s, rtTop - (#LANES + 1) * rowH - 8 * s, rtX + rtW, rtTop + 24 * s)
+    gl.Color(1, 1, 1, 0.95)
+    gl.Text("ROUND TRACKER", rtX, rtTop + 6 * s, 15 * s, "o")
+    local ry = rtTop - rowH
+    for _, l in ipairs(LANES) do
         local wa, wu = getP("mkt_wins" .. l.asset), getP("mkt_wins" .. l.usd)
         local ca, cu = TEAMCOL[l.asset], TEAMCOL[l.usd]
-        gl.Color(ca[1], ca[2], ca[3], 0.95)
-        gl.Text(string.format("%s %d", l.label, wa), sbX[i] - 8 * s, sbY, 24 * s, "ro")
-        gl.Color(1, 1, 1, 0.8)
-        gl.Text("—", sbX[i], sbY, 24 * s, "co")
-        gl.Color(cu[1], cu[2], cu[3], 0.95)
-        gl.Text(string.format("%d USD", wu), sbX[i] + 8 * s, sbY, 24 * s, "o")
-        gl.Color(1, 1, 1, 0.55)
-        gl.Text("R" .. math.max(1, getP("mkt_round_" .. l.key)), sbX[i], sbY - 22 * s, 13 * s, "co")
+        gl.Color(ca[1], ca[2], ca[3], 1)
+        gl.Text(l.label, rtX, ry, 17 * s, "o")
+        gl.Color(ca[1], ca[2], ca[3], 1)
+        gl.Text(tostring(wa), rtX + 96 * s, ry, 17 * s, "o")
+        gl.Color(1, 1, 1, 0.75)
+        gl.Text("-", rtX + 116 * s, ry, 17 * s, "o")
+        gl.Color(cu[1], cu[2], cu[3], 1)
+        gl.Text(wu .. " USD", rtX + 130 * s, ry, 17 * s, "o")
+        local inter = getP("mkt_intermission_" .. l.key)
+        gl.Color(1, 1, 1, 0.6)
+        if inter > frame then
+            gl.Text("reset " .. math.ceil((inter - frame) / 30) .. "s", rtX + 192 * s, ry, 13 * s, "o")
+        else
+            gl.Text("R" .. math.max(1, getP("mkt_round_" .. l.key)), rtX + 192 * s, ry, 13 * s, "o")
+        end
+        ry = ry - rowH
     end
 
     ---------------------------------------------------------------- round intermission banners
