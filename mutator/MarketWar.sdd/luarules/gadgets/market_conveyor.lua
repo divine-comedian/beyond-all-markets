@@ -16,7 +16,7 @@ end
 
 if not gadgetHandler:IsSyncedCode() then return end
 
-local SWEEP_FRAMES = 20 * 30   -- push cadence
+local SWEEP_FRAMES = 10 * 30   -- push cadence (fast: our orders must win the tug-of-war vs AI recalls)
 local BASE_RADIUS  = 1100      -- "parked near base" cylinder
 local GARRISON     = 8         -- units left home per team
 local PUSH_MAX     = 20        -- cap per sweep so pushes read as waves
@@ -66,11 +66,15 @@ local function pushTeam(teamID, enemyPoint, f)
     if not (base and enemyPoint) then return end
     -- sea teams park their fleet offshore around the shipyard, well beyond
     -- the land-base footprint — sweep a wider circle for them
-    local radius = SEA_DROP[teamID] and 2000 or BASE_RADIUS
+    local isSea = SEA_DROP[teamID] ~= nil
+    local radius = isSea and 2000 or BASE_RADIUS
     local units = Spring.GetUnitsInCylinder(base.x, base.z, radius, teamID)
     local eligible = {}
     for _, uid in ipairs(units) do
-        if isPushable[Spring.GetUnitDefID(uid)] and parked(uid) then
+        -- sea lanes: CircuitAI holds fleets in ORDERED regroup formations, so
+        -- the parked() filter never catches the cluster — push everything in
+        -- the base zone regardless of orders. AI recalls just get re-pushed.
+        if isPushable[Spring.GetUnitDefID(uid)] and (isSea or parked(uid)) then
             eligible[#eligible + 1] = uid
         end
     end
