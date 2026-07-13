@@ -45,8 +45,37 @@ end
 local lastReload = {}   -- teamID -> os.clock of last reload attempt
 local nextWatch = 0
 
+local prevReset = {}    -- teamID -> last seen mkt_reset frame
+local pendingReload = {} -- teamID -> game frame to reload at
+local pendingReport = {} -- teamID -> game frame to report recovery at
+
 local function watchdog()
     local now = os.clock()
+    local gf = Spring.GetGameFrame()
+    -- proactive reactivation: EVERY round reset reloads both pair AIs 20s
+    -- after their commanders respawn. Post-reset CircuitAI instances run in
+    -- a busy-but-broken state (eco errands, no production, ignore gifted
+    -- factories) that only a fresh init reliably clears; detection-based
+    -- reloading misses the busy cases.
+    for teamID = 0, 7 do
+        local resetF = Spring.GetGameRulesParam("mkt_reset" .. teamID) or 0
+        if resetF > 0 and resetF ~= prevReset[teamID] then
+            prevReset[teamID] = resetF
+            pendingReload[teamID] = resetF + 20 * 30
+            pendingReport[teamID] = resetF + 150 * 30
+        end
+        if pendingReload[teamID] and gf >= pendingReload[teamID] then
+            pendingReload[teamID] = nil
+            Spring.Echo("MKTWAR-REACTIVATE post-reset aireload team " .. teamID)
+            Spring.SendCommands("aireload " .. teamID)
+        end
+        if pendingReport[teamID] and gf >= pendingReport[teamID] then
+            pendingReport[teamID] = nil
+            Spring.Echo(string.format("MKTWAR-RECOVERY team=%d units=%d metal=%.0f (150s after reset)",
+                teamID, Spring.GetTeamUnitCount(teamID) or 0,
+                Spring.GetTeamResources(teamID, "metal") or -1))
+        end
+    end
     if now < nextWatch then return end
     nextWatch = now + 10
     for teamID = 0, 7 do

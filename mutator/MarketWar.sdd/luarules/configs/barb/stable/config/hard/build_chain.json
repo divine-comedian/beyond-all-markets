@@ -15,21 +15,21 @@
 		},
 		
 	// Actual number of defences per cluster bounded by income - the order of defenses that should be build with numbers as above.
-	"land":  [0, 3, 15, 5, 6, 16, 4, 8, 10, 12],  // MKTWAR: +radar(15) +jammer(16) in cluster defence order
-	"water": [1, 1, 4, 9, 10, 9, 10],
-	"prevent": 1,  // number of preventive defences
+	"land":  [0, 3, 2, 15, 5, 6, 16, 4, 7, 8, 10, 11, 13, 12],  // MKTWAR v2: longer + more varied defence ladder
+	"water": [1, 2, 4, 9, 15, 10, 16, 9, 12, 10],  // MKTWAR: varied naval defences (+AA, radar, jammer, doomsday)
+	"prevent": 2,  // MKTWAR was 1 — build defences before being taught why
 	"amount": {  // income bound factor
 		"offset": [-2.0, 2.0],
 		// Amount factor: 10x10 ~ 48.0, 20x20 ~ 32.0
-		"factor": [48.0, 32.0],
+		"factor": [24.0, 16.0],  // MKTWAR was [48,32] — twice the defence budget
 		"map": [10, 20]
 	},
 	"point_range": 600.0,  // maximum distance between 2 points in hierarchical cluster within economy cluster
 
 	// Base defence and time to build it, in seconds
 	"base": [
-		[3, 420], [2, 520], [4, 760], [10, 1200], [14, 1250], [12, 1600], [22, 1800]
-	],
+		[4, 300], [4, 480], [6, 700], [12, 1000], [16, 1250], [16, 1600], [26, 1800]
+	],  // MKTWAR: earlier, denser base defence
 
 	//superweapons get only build when there is nothing else to do
 	"superweapon": {

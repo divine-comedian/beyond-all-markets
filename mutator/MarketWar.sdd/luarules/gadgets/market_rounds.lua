@@ -53,6 +53,7 @@ local INSURE_DEF = {  -- teamID -> factory unitdef name
     [6] = "armap",  [7] = "corap",      -- ETH: air
 }
 local noFactorySince = {}   -- teamID -> frame
+local insurePos             -- forward declaration (defined below)
 
 function gadget:Initialize()
     GG.MarketWar = GG.MarketWar or {}
@@ -144,6 +145,18 @@ local function startRound(pr)
             local uid = Spring.CreateUnit(defName, p.x, y, p.z, 0, teamID)
             if uid then
                 Spring.SpawnCEG("commanderspawn", p.x, y, p.z)
+                -- FIRST priority: unit production. Order the fresh commander
+                -- to build the lane factory before the AI does anything else.
+                local fdef = UnitDefNames[INSURE_DEF[teamID] or ""]
+                if fdef then
+                    local fx, fz = insurePos(teamID)
+                    if fx then
+                        Spring.GiveOrderToUnit(uid, -fdef.id,
+                            { fx, Spring.GetGroundHeight(fx, fz), fz, 0 }, 0)
+                    end
+                end
+                -- signal the host: this team was just reset (proactive aireload)
+                Spring.SetGameRulesParam("mkt_reset" .. teamID, Spring.GetGameFrame())
             else
                 pr.pendingSpawn = Spring.GetGameFrame() + 30   -- blocked; retry
                 return
@@ -162,7 +175,7 @@ local function startRound(pr)
         pr.key, pr.round, pr.wins[pr.asset], pr.wins[pr.usd]))
 end
 
-local function insurePos(teamID)
+function insurePos(teamID)   -- assigns the forward-declared local
     local base = startPos[teamID]
     if not base then return end
     local drop = SEA_DROP[teamID]

@@ -17,6 +17,7 @@ if not gadgetHandler:IsSyncedCode() then return end
 local TEAMS = { 0, 1, 2, 3, 4, 5, 6, 7 }
 local stuckSince = {}   -- teamID -> frame the stuck pattern was first seen
 local isCommander, isFactory = {}, {}
+local lastBank = {}     -- teamID -> {m, frame} for pegged-bank detection
 
 function gadget:Initialize()
     for udid, ud in pairs(UnitDefs) do
@@ -44,6 +45,16 @@ function gadget:GameFrame(f)
             end
         end
         stuck = commIdle and not hasFactory
+        -- busy-limp: the AI runs errands but spends NOTHING — bank frozen to
+        -- the metal (insurance factories get ignored by broken instances;
+        -- seen live: banks pegged at exactly 4059 for minutes). A healthy
+        -- team's bank always moves.
+        local m = Spring.GetTeamResources(teamID, "metal") or 0
+        local lb = lastBank[teamID]
+        if lb and m > 2000 and math.abs(m - lb.m) < 1 then
+            stuck = true
+        end
+        lastBank[teamID] = { m = m, frame = f }
         if stuck then
             stuckSince[teamID] = stuckSince[teamID] or f
         else
