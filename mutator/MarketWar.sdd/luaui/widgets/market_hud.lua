@@ -10,7 +10,7 @@ function widget:GetInfo()
     }
 end
 
-local BUILD = "MW v9"
+local BUILD = "MW v12"
 
 -- Teams (match gen-startscript.sh)
 local TEAMNAME = {
@@ -35,7 +35,7 @@ local WHITE = { 0.95, 0.95, 0.95 }
 local LANES = {
     { key = "spx",  mkt = "SPX",  asset = 2, usd = 3, label = "SP500", ox = -0.15, oz = -0.15 },
     { key = "btc",  mkt = "BTC",  asset = 0, usd = 1, label = "BTC",   ox = 0,     oz = 0 },
-    { key = "gold", mkt = "GOLD", asset = 4, usd = 5, label = "GOLD",  ox = 0.15,  oz = 0.15 },
+    { key = "gold", mkt = "GOLD", asset = 4, usd = 5, label = "GOLD",  ox = 0.05,  oz = -0.05 },
     -- corner=true: the ETH lane spans corner to corner, so its ticker renders
     -- at BOTH back corners (near each base) instead of the cluttered middle
     { key = "eth",  mkt = "ETH",  asset = 6, usd = 7, label = "ETH", corner = true },
@@ -227,6 +227,12 @@ function widget:DrawScreen()
                 local c = TEAMCOL[team]
                 gl.Color(c[1], c[2], c[3], 1)
                 gl.Text(TEAMNAME[team], sx, sy, 32 * s, "co")
+                -- comeback rally: exponential 5m relative-strength income boost
+                local rally = getP("mkt_rally" .. team)
+                if rally > 1.15 then
+                    gl.Color(1, 0.85, 0.2, 0.6 + 0.4 * math.abs(math.sin(now * 5)))
+                    gl.Text(string.format("RALLY x%.1f", rally), sx, sy + 36 * s, 22 * s, "co")
+                end
             end
         end
     end

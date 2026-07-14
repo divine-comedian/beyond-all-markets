@@ -17,6 +17,13 @@ start_feed() {
 }
 
 start_engine() {
+    # Spring truncates infolog.txt on boot, so a restart silently destroys the
+    # previous match's telemetry (lost a 2h47m run this way). Archive it first.
+    if [ -s "$DATA_DIR/infolog.txt" ]; then
+        last=$(grep -oE '\[f=[0-9]+\]' "$DATA_DIR/infolog.txt" | tail -1 | tr -dc '0-9')
+        mv "$DATA_DIR/infolog.txt" \
+           "$DATA_DIR/logs/infolog-$(date +%Y%m%d-%H%M%S)-f${last:-0}.txt"
+    fi
     bash "$ROOT/scripts/gen-startscript.sh" 'Market War $VERSION' > /dev/null
     # publish the current mutator for spectator auto-sync
     mkdir -p "$DATA_DIR/www"

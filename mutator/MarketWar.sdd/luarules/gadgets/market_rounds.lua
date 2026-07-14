@@ -37,9 +37,9 @@ local isFactory    = {}   -- unitDefID -> true
 -- Production insurance: a commander can survive a round reset, wander off
 -- and build eco forever without ever rebuilding unit production (seen live:
 -- SP500 retreated inland where no shipyard placement exists and all its land
--- factories are banned). If a team has NO factory for 120s mid-round, the
+-- factories are banned). If a team has NO factory for 30s mid-round, the
 -- game plants the lane-appropriate one and the AI adopts it.
-local INSURANCE_FRAMES = 45 * 30   -- MKTWAR: was 120s — a full bank with no factory is dead air (seen on BTC)
+local INSURANCE_FRAMES = 30 * 30   -- MKTWAR: was 45s — commanders still idled too long after losing production
 local SEA_DROP = {   -- deep water per sea team (mirror market_conveyor.lua)
     [2] = { x = 6394, z = 1639 },
     [3] = { x = 1818, z = 4667 },
@@ -151,6 +151,19 @@ end
 function gadget:UnitDestroyed(unitID, unitDefID, unitTeam)
     local pr = teamPair[unitTeam]
     if not pr or not pr.active then return end
+    -- start the insurance clock the moment the LAST factory dies, not at the
+    -- next poll — the poll-start version left commanders idle for 30-50s
+    if isFactory[unitDefID] and INSURE_DEF[unitTeam] and not noFactorySince[unitTeam] then
+        local stillHas = false
+        for _, uid in ipairs(Spring.GetTeamUnits(unitTeam)) do
+            if uid ~= unitID and isFactory[Spring.GetUnitDefID(uid)] then
+                stillHas = true; break
+            end
+        end
+        if not stillHas then
+            noFactorySince[unitTeam] = Spring.GetGameFrame()
+        end
+    end
     local defName = isCommander[unitDefID]
     if not defName then return end
     for _, uid in ipairs(Spring.GetTeamUnits(unitTeam)) do
@@ -212,14 +225,27 @@ local function startRound(pr)
 end
 
 function insurePos(teamID)   -- assigns the forward-declared local
-    local base = startPos[teamID]
-    if not base then return end
+    -- anchor at the commander's CURRENT position — rebuilt production should
+    -- appear where the fight moved, not at the long-abandoned start area
+    local anchor = startPos[teamID]
+    for _, uid in ipairs(Spring.GetTeamUnits(teamID)) do
+        if isCommander[Spring.GetUnitDefID(uid)] then
+            local cx, _, cz = Spring.GetUnitPosition(uid)
+            if cx then anchor = { x = cx, z = cz } end
+            break
+        end
+    end
+    if not anchor then return end
     local drop = SEA_DROP[teamID]
-    if not drop then return base.x, base.z end   -- land/air: at base
-    -- naval: first comfortably deep water walking from base toward the drop
+    if not drop then
+        -- land/air: one lab footprint away so the plant never sits on the commander
+        return math.max(64, math.min(Game.mapSizeX - 64, anchor.x + 128)),
+               math.max(64, math.min(Game.mapSizeZ - 64, anchor.z + 128))
+    end
+    -- naval: first comfortably deep water walking from the commander toward the drop
     for t = 0, 1, 0.02 do
-        local x = base.x + (drop.x - base.x) * t
-        local z = base.z + (drop.z - base.z) * t
+        local x = anchor.x + (drop.x - anchor.x) * t
+        local z = anchor.z + (drop.z - anchor.z) * t
         if Spring.GetGroundHeight(x, z) < -12 then
             return x, z
         end
@@ -286,8 +312,6 @@ function gadget:GameFrame(f)
             startRound(pr)
         end
     end
-    if f % 300 == 0 then
-        checkInsurance(f)
-        checkMercy(f)
-    end
+    if f % 150 == 0 then checkInsurance(f) end   -- 5s: keep the 30s promise honest
+    if f % 300 == 0 then checkMercy(f) end
 end

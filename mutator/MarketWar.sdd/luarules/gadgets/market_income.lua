@@ -28,6 +28,22 @@ local BASELINE_ENERGY = 60
 -- HUD flow bars and reinforcement triggers keep reading the RAW rates.
 local SMOOTH_ALPHA = 1 / 20
 
+-- Comeback rally (MW v11): relative strength over a rolling 5m window.
+-- A side whose market moved ITS way in the last 5m (price up = asset team,
+-- price down = USD team) earns an income boost that grows exponentially with
+-- the size of the move — flat market = ~nothing, violent comeback = a flood.
+-- Boost-only by design: the opposing side is never docked, so no economy
+-- ever shrinks under the AI's feet. Applied through the same EMA as income.
+local RALLY_WINDOW = 300   -- seconds of price history (5m)
+local RALLY_SCALE  = 0.5   -- % move per e-fold: 0.25%≈1.3x, 0.5%≈1.9x, 1%≈4.2x
+local RALLY_COEF   = 0.5   -- mult = 1 + COEF * (e^(gain/SCALE) - 1)
+local RALLY_MAX    = 8     -- multiplier ceiling
+
+local function rallyTarget(gainPct)
+    if gainPct <= 0 then return 1 end
+    return math.min(RALLY_MAX, 1 + RALLY_COEF * (math.exp(gainPct / RALLY_SCALE) - 1))
+end
+
 if gadgetHandler:IsSyncedCode() then
     ----------------------------------------------------------------- SYNCED
     GG.MarketWar = GG.MarketWar or {}
@@ -37,9 +53,13 @@ if gadgetHandler:IsSyncedCode() then
 
     local pending = {}        -- mkt -> {buy, sell, price}
     local smooth  = {}        -- mkt -> {buy, sell}
+    local hist    = {}        -- mkt -> rolling 1s prices (RALLY_WINDOW deep)
+    local rally   = {}        -- mkt -> {asset, usd} smoothed multipliers
     for mkt in pairs(PAIRS) do
         pending[mkt] = { buy = 0, sell = 0, price = 0 }
         smooth[mkt]  = { buy = 0, sell = 0 }
+        hist[mkt]    = {}
+        rally[mkt]   = { asset = 1, usd = 1 }
         GG.MarketWar.rates[mkt] = { buy = 0, sell = 0 }
         GG.MarketWar.price[mkt] = 0
     end
@@ -90,10 +110,20 @@ if gadgetHandler:IsSyncedCode() then
             local pd, sm = pending[mkt], smooth[mkt]
             sm.buy  = sm.buy  + (pd.buy  - sm.buy)  * SMOOTH_ALPHA
             sm.sell = sm.sell + (pd.sell - sm.sell) * SMOOTH_ALPHA
-            local am = (BASELINE_METAL  + sm.buy  * pr.m) * surgeMult(pr.asset)
-            local ae = (BASELINE_ENERGY + sm.buy  * pr.e) * surgeMult(pr.asset)
-            local um = (BASELINE_METAL  + sm.sell * pr.m) * surgeMult(pr.usd)
-            local ue = (BASELINE_ENERGY + sm.sell * pr.e) * surgeMult(pr.usd)
+            local h = hist[mkt]
+            if pd.price > 0 then
+                h[#h + 1] = pd.price
+                if #h > RALLY_WINDOW then table.remove(h, 1) end
+            end
+            local pct = 0
+            if #h > 1 and h[1] > 0 then pct = (h[#h] - h[1]) / h[1] * 100 end
+            local rl = rally[mkt]
+            rl.asset = rl.asset + (rallyTarget(pct)  - rl.asset) * SMOOTH_ALPHA
+            rl.usd   = rl.usd   + (rallyTarget(-pct) - rl.usd)   * SMOOTH_ALPHA
+            local am = (BASELINE_METAL  + sm.buy  * pr.m) * surgeMult(pr.asset) * rl.asset
+            local ae = (BASELINE_ENERGY + sm.buy  * pr.e) * surgeMult(pr.asset) * rl.asset
+            local um = (BASELINE_METAL  + sm.sell * pr.m) * surgeMult(pr.usd) * rl.usd
+            local ue = (BASELINE_ENERGY + sm.sell * pr.e) * surgeMult(pr.usd) * rl.usd
             Spring.AddTeamResource(pr.asset, "metal",  am)
             Spring.AddTeamResource(pr.asset, "energy", ae)
             Spring.AddTeamResource(pr.usd,   "metal",  um)
@@ -106,6 +136,8 @@ if gadgetHandler:IsSyncedCode() then
             Spring.SetGameRulesParam("mkt_e" .. pr.asset, ae)
             Spring.SetGameRulesParam("mkt_m" .. pr.usd, um)
             Spring.SetGameRulesParam("mkt_e" .. pr.usd, ue)
+            Spring.SetGameRulesParam("mkt_rally" .. pr.asset, rl.asset)
+            Spring.SetGameRulesParam("mkt_rally" .. pr.usd, rl.usd)
             GG.MarketWar.rates[mkt].buy  = pd.buy
             GG.MarketWar.rates[mkt].sell = pd.sell
             GG.MarketWar.price[mkt] = pd.price

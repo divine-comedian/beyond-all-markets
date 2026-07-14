@@ -68,5 +68,27 @@ for name, ud in pairs(UnitDefs) do
     end
 end
 
+-- Faster war: everything 15% cheaper, every builder 20% faster. Rounds were
+-- dragging — armies trickle out and commanders sit on banked metal. Handles
+-- both key generations (metalcost/energycost vs legacy buildcostmetal/-energy).
+local COST_MULT  = 0.85
+local BUILD_MULT = 1.20
+local nCost, nWorker = 0, 0
+for name, ud in pairs(UnitDefs) do
+    local touched = false
+    for _, key in ipairs({ "metalcost", "energycost", "buildcostmetal", "buildcostenergy" }) do
+        if tonumber(ud[key]) then
+            ud[key] = math.floor(tonumber(ud[key]) * COST_MULT + 0.5)
+            touched = true
+        end
+    end
+    if touched then nCost = nCost + 1 end
+    if (tonumber(ud.workertime) or 0) > 0 then
+        ud.workertime = math.floor(tonumber(ud.workertime) * BUILD_MULT + 0.5)
+        nWorker = nWorker + 1
+    end
+end
+
 Spring.Echo("MKTWAR-LOWECO producer structures scaled to " .. (SCALE * 100) .. "% output: " .. nScaled
-    .. " | commanders buffed (2x hp, 1.5x dmg): " .. nComm)
+    .. " | commanders buffed (2x hp, 1.5x dmg): " .. nComm
+    .. " | costs x" .. COST_MULT .. ": " .. nCost .. " | workertime x" .. BUILD_MULT .. ": " .. nWorker)

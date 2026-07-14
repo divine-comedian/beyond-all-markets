@@ -26,7 +26,7 @@ local PUSH_MAX     = 30        -- cap per sweep so pushes read as waves
 local SEA_DROP = {
     [2] = { x = 6394, z = 1639 },   -- SP500, NW ocean
     [3] = { x = 1818, z = 4667 },   -- USD-SP500, NW ocean
-    [4] = { x = 10695, z = 9952 },  -- GOLD, SE ocean (base on the SE coastline)
+    [4] = { x = 10695, z = 9952 },  -- GOLD, SE ocean (base on the E coastline)
     [5] = { x = 6800, z = 11000 },  -- USD-GOLD, SE ocean (base at south edge)
 }
 local PAIRS = {
@@ -38,6 +38,8 @@ local PAIRS = {
 
 local isCommander = {}
 local isPushable  = {}   -- unitDefID -> true for mobile armed non-builder units
+local isBomber    = {}   -- unitDefID -> true for aircraft with bomb/torpedo drops
+local isAirScout  = {}   -- unitDefID -> true for unarmed fast aircraft (peep/fink)
 
 function gadget:Initialize()
     for udid, ud in pairs(UnitDefs) do
@@ -47,10 +49,63 @@ function gadget:Initialize()
             and ud.weapons and #ud.weapons > 0 then
             isPushable[udid] = true
         end
+        if ud.canFly and ud.speed and ud.speed > 0 and not ud.isBuilder then
+            if ud.weapons and #ud.weapons > 0 then
+                for _, w in ipairs(ud.weapons) do
+                    local wd = WeaponDefs[w.weaponDef]
+                    if wd and (wd.type == "AircraftBomb" or wd.type == "TorpedoLauncher") then
+                        isBomber[udid] = true
+                    end
+                end
+            elseif not ud.isTransport then
+                isAirScout[udid] = true
+            end
+        end
     end
 end
 
 local CMD_FIGHT, CMD_GUARD, CMD_WAIT, CMD_PATROL, CMD_ATTACK = CMD.FIGHT, CMD.GUARD, CMD.WAIT, CMD.PATROL, CMD.ATTACK
+local CMD_MOVE, CMD_STOP = CMD.MOVE, CMD.STOP
+
+-- Anti-recall (naval): pushing harder does not win the tug-of-war — the AI
+-- issues a fresh recall the instant our FIGHT lands, so fleets sail out, turn
+-- around, sail back, forever (seen live on both flank lanes; reads as
+-- turtling). The referee vetoes the recall instead: once a sea unit has been
+-- committed to the front, the AI may still ATTACK and micro with it, but any
+-- order that moves it BACK toward its own base is refused. Commitment lapses
+-- after 4 min so a genuinely reorganizing fleet is never frozen forever.
+local SEA_TEAMS   = { [2] = true, [3] = true, [4] = true, [5] = true }
+local COMMIT_TTL  = 240 * 30
+local committed   = {}   -- unitID -> {frame, homeX, homeZ}
+
+function gadget:AllowCommand(unitID, unitDefID, unitTeam, cmdID, cmdParams, _, _, _, _, fromLua)
+    if fromLua then return true end            -- our own referee orders
+    if not SEA_TEAMS[unitTeam] then return true end
+    local c = committed[unitID]
+    if not c then return true end
+    if Spring.GetGameFrame() - c.frame > COMMIT_TTL then
+        committed[unitID] = nil
+        return true
+    end
+    if cmdID == CMD_ATTACK then return true end   -- fighting is always allowed
+    if cmdID == CMD_STOP or cmdID == CMD_WAIT or cmdID == CMD_GUARD then
+        return false                              -- park orders = turtling
+    end
+    if cmdID == CMD_MOVE or cmdID == CMD_FIGHT or cmdID == CMD_PATROL then
+        local tx, tz = cmdParams[1], cmdParams[3]
+        if not (tx and tz) then return true end
+        local x, _, z = Spring.GetUnitPosition(unitID)
+        if not x then return true end
+        local dNow = (x - c.homeX) ^ 2 + (z - c.homeZ) ^ 2
+        local dTgt = (tx - c.homeX) ^ 2 + (tz - c.homeZ) ^ 2
+        if dTgt < dNow * 0.81 then return false end   -- >10% closer to home = a recall
+    end
+    return true
+end
+
+function gadget:UnitDestroyed(unitID)
+    committed[unitID] = nil
+end
 
 -- Commander shepherd: broken/reloaded AI instances leave commanders standing
 -- idle for long stretches (worst on air/sea lanes). An idle commander is
@@ -108,8 +163,10 @@ local SQUADS = {
              cor = { "corak", "corstorm", "corthud", "corraid" } },
     sea  = { arm = { "armpt", "armdecade", "armpship", "armroy" },
              cor = { "corpt", "coresupp", "corpship", "corroy" } },
-    air  = { arm = { "armfig", "armthund", "armfig", "armpeep" },
-             cor = { "corveng", "corshad", "corveng", "corfink" } },
+    -- air: bomber-heavy — the raid loop above turns every idle bomber into
+    -- base pressure; fighters escort, one scout slot keeps the fog lifted
+    air  = { arm = { "armfig", "armthund", "armthund", "armpeep" },
+             cor = { "corveng", "corshad", "corshad", "corfink" } },
 }
 local ASSET_TEAMS = { [0] = true, [2] = true, [4] = true, [6] = true }
 local TEAM_KIND = { [0] = "land", [1] = "land", [2] = "sea", [3] = "sea",
@@ -153,13 +210,69 @@ end
 -- the armies meet head-on in the middle.
 local FUNNEL = { [0] = { x = 6100, z = 6150 }, [1] = { x = 6100, z = 6150 } }
 
-local function pushTeam(teamID, enemyPoint, f)
+local function pushTeam(teamID, enemyTeam, enemyPoint, f)
     local base = GG.MarketWar.startPos and GG.MarketWar.startPos[teamID]
     if not (base and enemyPoint) then return end
     local ordered = 0
     local ey = Spring.GetGroundHeight(enemyPoint.x, enemyPoint.z)
     local funnel = FUNNEL[teamID]
+
+    -- AIR RAID: fight-move only engages what's in LOS, and nothing scouts
+    -- for the bombers — they arrived blind over fog, circled, went home
+    -- (seen live on both ETH sides). The referee runs the air campaign:
+    -- idle scouts PATROL the enemy base (lifting fog for everyone), idle
+    -- bombers ground-attack the coordinates of a live enemy factory — a
+    -- position strike needs no sighting, so the air base dies even unseen.
+    if AIR_TEAMS[teamID] then
+        -- target priority: enemy factory (kill production), else the enemy
+        -- COMMANDER — bombing the airbase forever never ENDS a round, and the
+        -- ETH lane went 0-for-11 rounds while both sides razed each other's
+        -- factories. Only a commander kill scores, so once the enemy has no
+        -- production left, the bombers go for the head.
+        local fx, fz, comm
+        for _, uid in ipairs(Spring.GetTeamUnits(enemyTeam)) do
+            local udid = Spring.GetUnitDefID(uid)
+            local ud = UnitDefs[udid]
+            if ud and ud.isFactory and not fx then
+                fx, _, fz = Spring.GetUnitPosition(uid)
+            elseif isCommander[udid] then
+                comm = uid
+            end
+        end
+        local tgtID   -- unit-locked attack (tracks a moving commander)
+        if not fx and comm then tgtID = comm end
+        for _, uid in ipairs(Spring.GetTeamUnits(teamID)) do
+            local udid = Spring.GetUnitDefID(uid)
+            if isBomber[udid] or isAirScout[udid] then
+                local cmds = Spring.GetUnitCommands(uid, 1)
+                if not cmds or #cmds == 0 then
+                    if isBomber[udid] then
+                        if tgtID then
+                            Spring.GiveOrderToUnit(uid, CMD_ATTACK, { tgtID }, 0)
+                        else
+                            -- position strike: needs no line of sight, so a
+                            -- fogged factory still gets bombed
+                            local tx = (fx or enemyPoint.x) + math.random(-100, 100)
+                            local tz = (fz or enemyPoint.z) + math.random(-100, 100)
+                            Spring.GiveOrderToUnit(uid, CMD_ATTACK,
+                                { tx, Spring.GetGroundHeight(tx, tz), tz }, 0)
+                        end
+                        ordered = ordered + 1
+                    else
+                        local px = enemyPoint.x + math.random(-400, 400)
+                        local pz = enemyPoint.z + math.random(-400, 400)
+                        Spring.GiveOrderToUnit(uid, CMD_PATROL,
+                            { px, Spring.GetGroundHeight(px, pz), pz }, 0)
+                    end
+                end
+            end
+        end
+    end
     local function sendToFront(uid)
+        if SEA_TEAMS[teamID] then
+            -- commit: from here on, AI recalls toward home are vetoed
+            committed[uid] = { frame = f, homeX = base.x, homeZ = base.z }
+        end
         if funnel then
             local wx = funnel.x + math.random(-250, 250)
             local wz = funnel.z + math.random(-250, 250)
@@ -182,7 +295,9 @@ local function pushTeam(teamID, enemyPoint, f)
     else
         local pushables = {}
         for _, uid in ipairs(Spring.GetTeamUnits(teamID)) do
-            if isPushable[Spring.GetUnitDefID(uid)] then
+            -- bombers are raid-managed above: a FIGHT push here would bounce
+            -- them out of attack runs and rearm trips
+            if isPushable[Spring.GetUnitDefID(uid)] and not isBomber[Spring.GetUnitDefID(uid)] then
                 local x, _, z = Spring.GetUnitPosition(uid)
                 if x then
                     pushables[#pushables + 1] = {
@@ -243,8 +358,8 @@ function gadget:GameFrame(f)
         if active[pr.key] ~= false then
             local aTgt = SEA_DROP[pr.usd]   or (GG.MarketWar.startPos and GG.MarketWar.startPos[pr.usd])
             local uTgt = SEA_DROP[pr.asset] or (GG.MarketWar.startPos and GG.MarketWar.startPos[pr.asset])
-            pushTeam(pr.asset, aTgt, f)
-            pushTeam(pr.usd,   uTgt, f)
+            pushTeam(pr.asset, pr.usd,   aTgt, f)
+            pushTeam(pr.usd,   pr.asset, uTgt, f)
             foreman(pr.asset, f)
             foreman(pr.usd, f)
             shepherd(pr.asset)

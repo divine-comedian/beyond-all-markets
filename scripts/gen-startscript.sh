@@ -57,7 +57,7 @@ cat > "$DATA_DIR/script.txt" <<EOF
     [TEAM1] { TeamLeader=0; AllyTeam=1; Side=Cortex; StartPosX=4600;  StartPosZ=7400;  RgbColor=0.30 0.69 0.31; }
     [TEAM2] { TeamLeader=0; AllyTeam=0; Side=Armada; StartPosX=7400;  StartPosZ=1200;  RgbColor=0.25 0.55 0.95; }
     [TEAM3] { TeamLeader=0; AllyTeam=1; Side=Cortex; StartPosX=1150;  StartPosZ=5400;  RgbColor=0.15 0.85 0.60; }
-    [TEAM4] { TeamLeader=0; AllyTeam=0; Side=Armada; StartPosX=11840; StartPosZ=10400; RgbColor=0.95 0.80 0.15; }
+    [TEAM4] { TeamLeader=0; AllyTeam=0; Side=Armada; StartPosX=11600; StartPosZ=5000;  RgbColor=0.95 0.80 0.15; }
     [TEAM5] { TeamLeader=0; AllyTeam=1; Side=Cortex; StartPosX=5740;  StartPosZ=12000; RgbColor=0.60 0.85 0.25; }
     [TEAM6] { TeamLeader=0; AllyTeam=0; Side=Armada; StartPosX=10150; StartPosZ=600;   RgbColor=0.62 0.40 0.95; }
     [TEAM7] { TeamLeader=0; AllyTeam=1; Side=Cortex; StartPosX=2200;  StartPosZ=11750; RgbColor=0.20 0.60 0.35; }

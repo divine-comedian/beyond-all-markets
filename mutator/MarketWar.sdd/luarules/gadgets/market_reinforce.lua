@@ -40,7 +40,7 @@ local PAIRS = {
 local SEA_DROP = {
     [2] = { x = 6394, z = 1639 },   -- SP500, NW ocean
     [3] = { x = 1818, z = 4667 },   -- USD-SP500, NW ocean
-    [4] = { x = 10695, z = 9952 },  -- GOLD, SE ocean (base on the SE coastline)
+    [4] = { x = 10695, z = 9952 },  -- GOLD, SE ocean (base on the E coastline)
     [5] = { x = 6800, z = 11000 },  -- USD-GOLD, SE ocean (base at south edge)
 }
 

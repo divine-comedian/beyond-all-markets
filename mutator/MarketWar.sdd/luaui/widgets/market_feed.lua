@@ -150,7 +150,8 @@ local function heartbeat()
     local parts = { "MKTWAR f=" .. f }
     for _, l in ipairs(LANES_HB) do
         local lk = l.key:lower()
-        parts[#parts + 1] = string.format("%s a=%d/u=%d am=%.0f um=%.0f b=%.4f s=%.4f px=%.1f%s%s",
+        -- ra/ru = comeback-rally income multipliers (5m relative strength)
+        parts[#parts + 1] = string.format("%s a=%d/u=%d am=%.0f um=%.0f b=%.4f s=%.4f px=%.1f r=%.2f/%.2f%s%s",
             l.key,
             Spring.GetTeamUnitCount(l.asset) or 0, Spring.GetTeamUnitCount(l.usd) or 0,
             Spring.GetTeamResources(l.asset, "metal") or 0,
@@ -158,6 +159,8 @@ local function heartbeat()
             Spring.GetGameRulesParam("mkt_buy_" .. lk) or 0,
             Spring.GetGameRulesParam("mkt_sell_" .. lk) or 0,
             Spring.GetGameRulesParam("mkt_price_" .. lk) or 0,
+            Spring.GetGameRulesParam("mkt_rally" .. l.asset) or 1,
+            Spring.GetGameRulesParam("mkt_rally" .. l.usd) or 1,
             (Spring.GetGameRulesParam("mkt_stuck" .. l.asset) or 0) == 1 and " STUCK-a" or "",
             (Spring.GetGameRulesParam("mkt_stuck" .. l.usd) or 0) == 1 and " STUCK-u" or "")
     end
