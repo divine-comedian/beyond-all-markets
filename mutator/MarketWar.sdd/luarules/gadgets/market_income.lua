@@ -28,25 +28,23 @@ local BASELINE_ENERGY = 60
 -- HUD flow bars and reinforcement triggers keep reading the RAW rates.
 local SMOOTH_ALPHA = 1 / 20
 
--- Comeback rally (MW v11): relative strength over a rolling 5m window.
--- A side whose market moved ITS way in the last 5m (price up = asset team,
--- price down = USD team) earns an income boost that grows exponentially with
--- the size of the move — flat market = ~nothing, violent comeback = a flood.
--- Boost-only by design: the opposing side is never docked, so no economy
--- ever shrinks under the AI's feet. Applied through the same EMA as income.
-local RALLY_WINDOW = 300   -- seconds of price history (5m)
-local RALLY_SCALE  = 0.5   -- % move per e-fold: 0.25%≈1.3x, 0.5%≈1.9x, 1%≈4.2x
--- 2026-07-15 balance pass: overnight data showed the USD/Bears side winning ~68% of
--- rounds during a market selloff — the boost-only rally amplifies whichever side the
--- market favors into a runaway. Dampened (COEF 0.5->0.35, MAX 8->4) so the trending
--- side gets help without snowballing. Reversible; see market-war-balancing memory for
--- the deeper fix (make it a TRUE comeback keyed to round-win/army differential).
-local RALLY_COEF   = 0.35  -- mult = 1 + COEF * (e^(gain/SCALE) - 1)   (was 0.5)
-local RALLY_MAX    = 4      -- multiplier ceiling                       (was 8)
+-- TRUE comeback (MW v12): boost the side being pushed back RIGHT NOW.
+-- The old rally was keyed to price momentum, so a market selloff just
+-- amplified whichever side the market favored — overnight data (2026-07-15,
+-- ~31 rounds) showed USD/Bears winning ~68% of rounds every lane. Replaced:
+-- the boost is now keyed to the live ARMY-STRENGTH deficit per lane. Whoever
+-- is weaker on the field out-produces to claw back. Boost-only by design —
+-- the leading side is never docked, so no economy shrinks under the AI. Fed
+-- through the same EMA as income so it ramps smoothly. (mirror config/war.env)
+local COMEBACK_COEF   = 1.0    -- mult = 1 + COEF * (e^(deficit/SCALE) - 1)
+local COMEBACK_SCALE  = 0.5    -- army deficit per e-fold (deficit .5 -> ~2.7x, capped)
+local COMEBACK_MAX    = 4      -- income multiplier ceiling
+local COMEBACK_MIN_ARMY = 1500 -- army-value floor before the boost engages (dormant at spawn)
 
-local function rallyTarget(gainPct)
-    if gainPct <= 0 then return 1 end
-    return math.min(RALLY_MAX, 1 + RALLY_COEF * (math.exp(gainPct / RALLY_SCALE) - 1))
+-- deficit in 0..1 = (strong-weak)/(strong+weak); boost applies to the weaker side only.
+local function comebackTarget(deficit)
+    if deficit <= 0 then return 1 end
+    return math.min(COMEBACK_MAX, 1 + COMEBACK_COEF * (math.exp(deficit / COMEBACK_SCALE) - 1))
 end
 
 if gadgetHandler:IsSyncedCode() then
@@ -55,18 +53,33 @@ if gadgetHandler:IsSyncedCode() then
     GG.MarketWar.surge = GG.MarketWar.surge or {}
     GG.MarketWar.rates = {}   -- mkt -> {buy, sell} (raw, per last tick)
     GG.MarketWar.price = {}   -- mkt -> price
+    GG.MarketWar.army  = {}   -- teamID -> live army metal value (mobile combat only)
+
+    -- army-value = sum of metalCost over a team's MOBILE COMBAT units (speed>0,
+    -- not a builder) — tracks fighting strength, not economy. Cache per def.
+    local armyCost = {}       -- unitDefID -> metalCost (0 = not counted)
+    for udid, ud in pairs(UnitDefs) do
+        armyCost[udid] = (ud.speed and ud.speed > 0 and not ud.isBuilder)
+            and (ud.metalCost or 0) or 0
+    end
 
     local pending = {}        -- mkt -> {buy, sell, price}
     local smooth  = {}        -- mkt -> {buy, sell}
-    local hist    = {}        -- mkt -> rolling 1s prices (RALLY_WINDOW deep)
-    local rally   = {}        -- mkt -> {asset, usd} smoothed multipliers
+    local rally   = {}        -- mkt -> {asset, usd} smoothed comeback multipliers
     for mkt in pairs(PAIRS) do
         pending[mkt] = { buy = 0, sell = 0, price = 0 }
         smooth[mkt]  = { buy = 0, sell = 0 }
-        hist[mkt]    = {}
         rally[mkt]   = { asset = 1, usd = 1 }
         GG.MarketWar.rates[mkt] = { buy = 0, sell = 0 }
         GG.MarketWar.price[mkt] = 0
+    end
+
+    local function armyValue(teamID)
+        local sum = 0
+        for _, uid in ipairs(Spring.GetTeamUnits(teamID) or {}) do
+            sum = sum + armyCost[Spring.GetUnitDefID(uid)]
+        end
+        return sum
     end
 
     function gadget:GameStart()
@@ -115,16 +128,23 @@ if gadgetHandler:IsSyncedCode() then
             local pd, sm = pending[mkt], smooth[mkt]
             sm.buy  = sm.buy  + (pd.buy  - sm.buy)  * SMOOTH_ALPHA
             sm.sell = sm.sell + (pd.sell - sm.sell) * SMOOTH_ALPHA
-            local h = hist[mkt]
-            if pd.price > 0 then
-                h[#h + 1] = pd.price
-                if #h > RALLY_WINDOW then table.remove(h, 1) end
+            -- TRUE comeback: boost the side that is weaker on the field now.
+            local aArmy = armyValue(pr.asset)
+            local uArmy = armyValue(pr.usd)
+            GG.MarketWar.army[pr.asset] = aArmy
+            GG.MarketWar.army[pr.usd]   = uArmy
+            local aTarget, uTarget = 1, 1
+            local strong = (aArmy > uArmy) and aArmy or uArmy
+            if strong >= COMEBACK_MIN_ARMY then
+                local weak = (aArmy < uArmy) and aArmy or uArmy
+                local deficit = (strong - weak) / (strong + weak)   -- strong+weak > 0 here
+                local boost = comebackTarget(deficit)
+                if aArmy < uArmy then aTarget = boost
+                elseif uArmy < aArmy then uTarget = boost end
             end
-            local pct = 0
-            if #h > 1 and h[1] > 0 then pct = (h[#h] - h[1]) / h[1] * 100 end
             local rl = rally[mkt]
-            rl.asset = rl.asset + (rallyTarget(pct)  - rl.asset) * SMOOTH_ALPHA
-            rl.usd   = rl.usd   + (rallyTarget(-pct) - rl.usd)   * SMOOTH_ALPHA
+            rl.asset = rl.asset + (aTarget - rl.asset) * SMOOTH_ALPHA
+            rl.usd   = rl.usd   + (uTarget - rl.usd)   * SMOOTH_ALPHA
             local am = (BASELINE_METAL  + sm.buy  * pr.m) * surgeMult(pr.asset) * rl.asset
             local ae = (BASELINE_ENERGY + sm.buy  * pr.e) * surgeMult(pr.asset) * rl.asset
             local um = (BASELINE_METAL  + sm.sell * pr.m) * surgeMult(pr.usd) * rl.usd
@@ -143,6 +163,8 @@ if gadgetHandler:IsSyncedCode() then
             Spring.SetGameRulesParam("mkt_e" .. pr.usd, ue)
             Spring.SetGameRulesParam("mkt_rally" .. pr.asset, rl.asset)
             Spring.SetGameRulesParam("mkt_rally" .. pr.usd, rl.usd)
+            Spring.SetGameRulesParam("mkt_army" .. pr.asset, aArmy)
+            Spring.SetGameRulesParam("mkt_army" .. pr.usd, uArmy)
             GG.MarketWar.rates[mkt].buy  = pd.buy
             GG.MarketWar.rates[mkt].sell = pd.sell
             GG.MarketWar.price[mkt] = pd.price

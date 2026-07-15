@@ -56,7 +56,8 @@ synced gadget market_income.lua ──AddTeamResource──> Bulls/Bears economi
 | `ROUND_INTERMISSION_SEC` | 10 | pause between commander kill and fresh spawn |
 | `FLIP_DROP_PCT/HOLD/COOLDOWN` | 0.05% / 30s / 120s | sustained 1-min flip against the dominant side drops underdog reinforcements |
 | `WHALE_SPAWN_BTC` | 0.5 | 1s volume bucket that instantly deploys a squad for that side |
-| `RALLY_SCALE_PCT/MAX` | 0.5% / 8 | 5m relative-strength comeback boost, exponential and boost-only |
+| `COMEBACK_COEF/SCALE/MAX` | 1.0 / 0.5 / 4 | true comeback: income boost for the side losing the fight (live army deficit), exponential and boost-only |
+| `COMEBACK_DROP_RATIO/HOLD/COOLDOWN` | 2.0 / 4s / 45s | army-deficit reinforcement drops for the behind side |
 
 Quiet market ≈ 0.002-0.01 BTC/s (≈ +1-4 metal/s); a 1 BTC/s burst ≈ +400 metal/s flood.
 Edit values in `mutator/.../market_income.lua` + `war.env` together.

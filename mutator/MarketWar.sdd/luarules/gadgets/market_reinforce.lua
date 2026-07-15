@@ -22,6 +22,15 @@ local WHALE_PER_STEP    = 4
 local WHALE_MAX         = 24
 local WHALE_COOLDOWN_SEC = 30         -- per side
 
+-- TRUE comeback drops (MW v12): the losing side surges forward. Keyed to the
+-- live army-strength deficit (GG.MarketWar.army, from market_income.lua) — NOT
+-- a price flip. When one side trails by >= RATIO held for HOLD_SEC, drop a
+-- squad for the BEHIND side toward the enemy. (mirror config/war.env)
+local COMEBACK_DROP_RATIO    = 2.0    -- strong/weak army ratio that triggers a drop
+local COMEBACK_DROP_HOLD_SEC = 4      -- seconds the ratio must hold first
+local COMEBACK_DROP_COOLDOWN_SEC = 45 -- per-lane cooldown between comeback drops
+local COMEBACK_DROP_MIN_ARMY = 1500   -- strong-side floor (match income's COMEBACK_MIN_ARMY)
+
 -- Lane pairs; whale = 1s volume bucket that triggers a deploy, in the
 -- market's native unit. Flank markets trade chunkier (fewer, bigger prints —
 -- measured ~28/min SPX, ~14/min GOLD), so their bars are set lower (~$15k)
@@ -142,6 +151,29 @@ local function checkFlip(pr, f)
     end
 end
 
+-- Reinforce the side losing the FIGHT (army-value deficit), independent of price.
+local function checkComeback(pr, f)
+    local army = GG.MarketWar.army
+    if not army then return end
+    local aArmy, uArmy = army[pr.asset] or 0, army[pr.usd] or 0
+    local strong = (aArmy > uArmy) and aArmy or uArmy
+    local weak   = (aArmy < uArmy) and aArmy or uArmy
+    if strong < COMEBACK_DROP_MIN_ARMY then pr.comebackHold = 0; return end
+    local ratio = (weak > 0) and (strong / weak) or math.huge
+    if ratio < COMEBACK_DROP_RATIO then pr.comebackHold = 0; return end
+
+    pr.comebackHold = pr.comebackHold + 1
+    if pr.comebackHold >= COMEBACK_DROP_HOLD_SEC
+       and f - pr.lastComeback >= COMEBACK_DROP_COOLDOWN_SEC * 30 then
+        local behind = (aArmy < uArmy) and pr.asset or pr.usd
+        local steps  = (ratio == math.huge) and 4 or math.floor(ratio)
+        local n = math.min(FLIP_MAX_SQUAD, FLIP_BASE_SQUAD * steps)
+        pr.lastComeback = f
+        pr.comebackHold = 0
+        spawnSquad(pr, behind, n, 3, f)
+    end
+end
+
 local function checkWhale(pr, f)
     local rates = GG.MarketWar.rates and GG.MarketWar.rates[pr.mkt]
     if not rates then return end
@@ -160,6 +192,8 @@ function gadget:Initialize()
         pr.hist = {}
         pr.flipHold = 0
         pr.lastFlip = -math.huge
+        pr.comebackHold = 0
+        pr.lastComeback = -math.huge
         pr.lastWhale = { [pr.asset] = -math.huge, [pr.usd] = -math.huge }
     end
 end
@@ -170,8 +204,10 @@ function gadget:GameFrame(f)
     for _, pr in ipairs(PAIRS) do
         if active[pr.key] == false then
             pr.flipHold = 0
+            pr.comebackHold = 0
         else
             checkFlip(pr, f)
+            checkComeback(pr, f)
             checkWhale(pr, f)
         end
     end
