@@ -48,8 +48,8 @@ def test_format_line_empty_bucket_keeps_last_price():
 
 
 def test_format_trade_v2_buy_and_sell():
-    assert format_trade("BTC", is_buyer_maker=False, qty=0.5123, price=64000.12, venue="BN") \
-        == "trd:BTC:B:0.5123:64000.12:BN"
+    assert format_trade("SOL", is_buyer_maker=False, qty=0.5123, price=64000.12, venue="BN") \
+        == "trd:SOL:B:0.5123:64000.12:BN"
     assert format_trade("SPX", is_buyer_maker=True, qty=100, price=650.25, venue="AP") \
         == "trd:SPX:S:100.0000:650.25:AP"
 
@@ -214,3 +214,10 @@ def test_route_coinbase_sol_folds_and_keeps_binance_price():
          "size": "1.5", "price": "182.0"}, bs)
     assert hit == ("SOL", False, 1.5, 182.0)     # maker sell => taker bought
     assert bs["SOL"]["buy"] == 1.5 and bs["SOL"]["price"] == 182.5
+
+
+def test_route_coinbase_ignores_unknown_product_and_non_match():
+    bs = new_buckets()
+    assert route_coinbase({"type": "match", "product_id": "DOGE-USD",
+                           "side": "buy", "size": "1", "price": "1"}, bs) is None
+    assert route_coinbase({"type": "heartbeat"}, bs) is None
