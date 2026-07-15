@@ -12,6 +12,14 @@ end
 
 local DEBUG = false
 
+-- Telemetry goes to the host infolog via Spring.Log, NOT Spring.Echo. The
+-- original code assumed the host was a separate headless engine so Echo never
+-- reached a spectator's screen — but in the Option-B cloud setup the host
+-- engine IS the one being rendered/streamed, so Echo painted the public
+-- stream's console. Spring.Log("MKTWAR", ...) stays in the infolog only
+-- (verified: the gadgets' Spring.Log lines never appear on the rendered frame).
+local function tlog(msg) Spring.Log("MKTWAR", "info", msg) end
+
 -- Only the hosting player's client reads the local feed daemon and relays it
 -- into synced code via SendLuaRulesMsg (keeps the sim deterministic).
 local FEED_HOST, FEED_PORT = "127.0.0.1", 8642
@@ -32,12 +40,12 @@ function widget:Initialize()
         return
     end
     if not socket then
-        Spring.Echo("MarketWar: LuaSocket unavailable in LuaUI! Check TCPAllowConnect.")
+        tlog("MarketWar: LuaSocket unavailable in LuaUI! Check TCPAllowConnect.")
         widgetHandler:RemoveWidget(self)
         return
     end
     client = connect()
-    Spring.Echo("MarketWar: feed bridge connecting to " .. FEED_HOST .. ":" .. FEED_PORT)
+    tlog("MarketWar: feed bridge connecting to " .. FEED_HOST .. ":" .. FEED_PORT)
 end
 
 -- AI watchdog: the synced side flags teams whose CircuitAI instance silently
@@ -70,12 +78,12 @@ local function watchdog()
     for teamID = 0, 7 do
         if pendingReload[teamID] and gf >= pendingReload[teamID] then
             pendingReload[teamID] = nil
-            Spring.Echo("MKTWAR-REACTIVATE post-reset aireload team " .. teamID)
+            tlog("MKTWAR-REACTIVATE post-reset aireload team " .. teamID)
             Spring.SendCommands("aireload " .. teamID)
         end
         if pendingReport[teamID] and gf >= pendingReport[teamID] then
             pendingReport[teamID] = nil
-            Spring.Echo(string.format("MKTWAR-RECOVERY team=%d units=%d metal=%.0f (170s after round end)",
+            tlog(string.format("MKTWAR-RECOVERY team=%d units=%d metal=%.0f (170s after round end)",
                 teamID, Spring.GetTeamUnitCount(teamID) or 0,
                 Spring.GetTeamResources(teamID, "metal") or -1))
         end
@@ -86,7 +94,7 @@ local function watchdog()
         if (Spring.GetGameRulesParam("mkt_stuck" .. teamID) or 0) == 1
             and now - (lastReload[teamID] or -math.huge) > 120 then
             lastReload[teamID] = now
-            Spring.Echo("MKTWAR-WATCHDOG reloading stuck AI on team " .. teamID)
+            tlog("MKTWAR-WATCHDOG reloading stuck AI on team " .. teamID)
             Spring.SendCommands("aireload " .. teamID)
         end
     end
@@ -112,7 +120,7 @@ local function eventLog()
     local dropF = Spring.GetGameRulesParam("mkt_drop_frame") or 0
     if dropF > 0 and dropF ~= prevDrop then
         prevDrop = dropF
-        Spring.Echo(string.format("MKTWAR-DROP f=%d team=%d n=%d kind=%d", dropF,
+        tlog(string.format("MKTWAR-DROP f=%d team=%d n=%d kind=%d", dropF,
             Spring.GetGameRulesParam("mkt_drop_team") or -1,
             Spring.GetGameRulesParam("mkt_drop_n") or 0,
             Spring.GetGameRulesParam("mkt_drop_kind") or 0))
@@ -120,13 +128,13 @@ local function eventLog()
     local insF = Spring.GetGameRulesParam("mkt_insure_frame") or 0
     if insF > 0 and insF ~= (prevInsure or 0) then
         prevInsure = insF
-        Spring.Echo(string.format("MKTWAR-INSURE f=%d team=%d (factory planted)", insF,
+        tlog(string.format("MKTWAR-INSURE f=%d team=%d (factory planted)", insF,
             Spring.GetGameRulesParam("mkt_insure_team") or -1))
     end
     local pushF = Spring.GetGameRulesParam("mkt_push_frame") or 0
     if pushF > 0 and pushF ~= prevPush then
         prevPush = pushF
-        Spring.Echo(string.format("MKTWAR-PUSH f=%d team=%d n=%d", pushF,
+        tlog(string.format("MKTWAR-PUSH f=%d team=%d n=%d", pushF,
             Spring.GetGameRulesParam("mkt_push_team") or -1,
             Spring.GetGameRulesParam("mkt_push_n") or 0))
     end
@@ -135,7 +143,7 @@ local function eventLog()
         if inter > 0 and inter ~= prevInter[l] then
             prevInter[l] = inter
             scheduleReactivation(l)
-            Spring.Echo(string.format("MKTWAR-ROUND %s to team %d (wins now a=%d u=%d)", l,
+            tlog(string.format("MKTWAR-ROUND %s to team %d (wins now a=%d u=%d)", l,
                 Spring.GetGameRulesParam("mkt_roundwinner_" .. l) or -1,
                 Spring.GetGameRulesParam("mkt_wins" .. ({btc=0,spx=2,gold=4,eth=6})[l]) or 0,
                 Spring.GetGameRulesParam("mkt_wins" .. ({btc=1,spx=3,gold=5,eth=7})[l]) or 0))
@@ -164,7 +172,7 @@ local function heartbeat()
             (Spring.GetGameRulesParam("mkt_stuck" .. l.asset) or 0) == 1 and " STUCK-a" or "",
             (Spring.GetGameRulesParam("mkt_stuck" .. l.usd) or 0) == 1 and " STUCK-u" or "")
     end
-    Spring.Echo(table.concat(parts, " | "))
+    tlog(table.concat(parts, " | "))
 end
 
 function widget:Update()
@@ -187,7 +195,7 @@ function widget:Update()
             if prefix == "trd:" then
                 nTrades = (nTrades or 0) + 1
                 if DEBUG and nTrades % 20 == 1 then
-                    Spring.Echo("MKTWAR-BRIDGE trd#" .. nTrades)
+                    tlog("MKTWAR-BRIDGE trd#" .. nTrades)
                 end
             end
         end
