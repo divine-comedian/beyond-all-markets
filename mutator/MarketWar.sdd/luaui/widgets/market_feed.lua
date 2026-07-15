@@ -27,6 +27,23 @@ local FEED_HOST, FEED_PORT = "127.0.0.1", 8642
 local client = nil
 local retryAt = 0
 
+-- Newest-first ring of recent BAM trades for the on-stream announce widget.
+-- Populated here (this widget already owns the feed socket) so the announce
+-- widget needs no second reader and no rules-param string (params are numeric).
+WG = WG or {}
+WG.BAMTicker = WG.BAMTicker or {}
+local BAM_TICKER_MAX = 12
+
+local function pushBAM(line)
+    local side, sol, mcap, addr = line:match("^bam:([BS]):([%d%.]+):([%d%.]+):(%w+):")
+    if not side then return end
+    table.insert(WG.BAMTicker, 1, {
+        side = side, sol = tonumber(sol), mcap = tonumber(mcap),
+        addr = addr, at = os.clock(),
+    })
+    while #WG.BAMTicker > BAM_TICKER_MAX do table.remove(WG.BAMTicker) end
+end
+
 local function connect()
     local sock = socket.tcp()
     sock:settimeout(0)
@@ -190,9 +207,11 @@ function widget:Update()
     local data, err = client:receive("*l")
     while data do
         local prefix = data:sub(1, 4)
-        if prefix == "mkt:" or prefix == "trd:" then
+        if prefix == "mkt:" or prefix == "trd:" or prefix == "bam:" then
             Spring.SendLuaRulesMsg(data)
-            if prefix == "trd:" then
+            if prefix == "bam:" then
+                pushBAM(data)
+            elseif prefix == "trd:" then
                 nTrades = (nTrades or 0) + 1
                 if DEBUG and nTrades % 20 == 1 then
                     tlog("MKTWAR-BRIDGE trd#" .. nTrades)
