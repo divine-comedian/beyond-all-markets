@@ -2,25 +2,21 @@
 """Multi-market trade feeds -> per-second buy/sell volume buckets -> TCP broadcast.
 
 Markets:
-    BTC  — Binance btcusdt aggTrades + Coinbase matches (price: Binance book)
+    SOL  — Binance solusdt aggTrades + Coinbase matches (price: Binance book)
     SPX  — Hyperliquid xyz:SP500 perp (TradeXYZ, S&P-DJI licensed), 24/7
     GOLD — Hyperliquid xyz:GOLD perp (COMEX-benchmarked) owns the price;
            volume folds in from Binance PAXG/XAUT (USDT+USDC), Bybit XAUT, and
            Coinbase PAXG — all 1 token = 1 troy oz, same unit as xyz:GOLD, so no
            rescale. GOLD is the thinnest lane, so it aggregates the most venues.
+    BAM  — synthetic-only in this build; no live source is wired up yet.
 
 Hyperliquid WS is public/keyless and trades carry the aggressor side
 ("B" = taker bought, "A" = taker sold) — verified live 2026-07-12:
 xyz:SP500 did ~$105k notional / 45s on a SUNDAY.
 
 Wire format v2 (one line per market per second to every connected client):
-    mkt:<MKT>:<buyVol>:<sellVol>:<price>      MKT in {BTC, GOLD, SPX}
+    mkt:<MKT>:<buyVol>:<sellVol>:<price>      MKT in {SOL, SPX, GOLD, BAM}
     trd:<MKT>:<B|S>:<qty>:<price>:<venue>
-
-Legacy v1 lines (mkt:<buy>:<sell>:<price> / trd:<B|S>:...) are still emitted
-for BTC while --legacy is on (default), so a feedd restart can't starve a
-running MW v5 game. The v5 gadget ignores v2 lines (regex mismatch) and a
-future v6 gadget ignores v1 — dual emission is safe in both directions.
 """
 import argparse
 import asyncio
@@ -29,25 +25,22 @@ import math
 import random
 
 BINANCE_COMBINED = ("wss://stream.binance.com:9443/stream?streams="
-                    "btcusdt@aggTrade/ethusdt@aggTrade/paxgusdt@aggTrade/"
-                    # extra GOLD volume: XAUT (Tether Gold, ~$15M/day — Binance's
-                    # is 3x Bybit's) + the USDC-quoted gold pairs. All oz-denominated,
-                    # same unit as xyz:GOLD, so they fold in without rescale.
+                    "solusdt@aggTrade/paxgusdt@aggTrade/"
+                    # extra GOLD volume: XAUT (Tether Gold) + USDC-quoted gold pairs,
+                    # all oz-denominated (same unit as xyz:GOLD), folded without rescale.
                     "xautusdt@aggTrade/paxgusdc@aggTrade/xautusdc@aggTrade/"
-                    "btcusdt@bookTicker/ethusdt@bookTicker/paxgusdt@bookTicker")
+                    "solusdt@bookTicker/paxgusdt@bookTicker")
 COINBASE_WS = "wss://ws-feed.exchange.coinbase.com"
 HYPERLIQUID_WS = "wss://api.hyperliquid.xyz/ws"
 BYBIT_WS = "wss://stream.bybit.com/v5/public/spot"
 
-MARKETS = ("BTC", "ETH", "GOLD", "SPX")
+MARKETS = ("SOL", "SPX", "GOLD", "BAM")
 BINANCE_SYMBOL_MKT = {
-    "btcusdt": "BTC", "ethusdt": "ETH",
-    # GOLD volume: PAX Gold + Tether Gold, USDT and USDC quotes (all 1 token = 1 oz)
+    "solusdt": "SOL",
     "paxgusdt": "GOLD", "xautusdt": "GOLD", "paxgusdc": "GOLD", "xautusdc": "GOLD",
 }
-# Coinbase match stream: BTC (price via Binance book) + PAXG (extra GOLD volume,
-# HL keeps the gold price). Coinbase is always a secondary venue — never price owner.
-COINBASE_PRODUCT_MKT = {"BTC-USD": "BTC", "PAXG-USD": "GOLD"}
+# Coinbase match stream: SOL (price via Binance book) + PAXG (extra GOLD volume).
+COINBASE_PRODUCT_MKT = {"SOL-USD": "SOL", "PAXG-USD": "GOLD"}
 HL_COIN_MKT = {"xyz:SP500": "SPX", "xyz:GOLD": "GOLD"}
 HL_PRICE_OWNER = {"SPX": True, "GOLD": True}   # Hyperliquid owns these prices
 # Bybit xStocks/RWA spot: extra volume for the thin flank markets.
@@ -92,15 +85,6 @@ def format_line(mkt, bucket):
 def format_trade(mkt, is_buyer_maker, qty, price, venue="BN"):
     side = "S" if is_buyer_maker else "B"
     return f"trd:{mkt}:{side}:{qty:.4f}:{price:.2f}:{venue}"
-
-
-def format_line_legacy(bucket):
-    return f"mkt:{bucket['buy']:.4f}:{bucket['sell']:.4f}:{bucket['price']:.2f}"
-
-
-def format_trade_legacy(is_buyer_maker, qty, price, venue="BN"):
-    side = "S" if is_buyer_maker else "B"
-    return f"trd:{side}:{qty:.4f}:{price:.2f}:{venue}"
 
 
 def route_binance(frame, buckets):
@@ -186,7 +170,7 @@ def route_coinbase(msg, buckets):
     """Route one Coinbase match into its market bucket; returns (mkt, m, qty, price) or None.
 
     Secondary venue: never owns a price, so an established bucket price (Binance
-    book for BTC, Hyperliquid for GOLD) is preserved. Seeds the price only if none
+    book for SOL, Hyperliquid for GOLD) is preserved. Seeds the price only if none
     exists yet, mirroring the PAXG-before-Hyperliquid case.
     """
     if msg.get("type") not in ("match", "last_match"):
@@ -256,13 +240,11 @@ async def _reconnecting(name, coro):
             await asyncio.sleep(3)
 
 
-def _emit_trade(bc, mkt, m, q, p, venue, legacy):
+def _emit_trade(bc, mkt, m, q, p, venue):
     bc.send(format_trade(mkt, m, q, p, venue))
-    if legacy and mkt == "BTC":
-        bc.send(format_trade_legacy(m, q, p, venue))
 
 
-async def binance_combined(buckets, bc, throttle, stats, legacy):
+async def binance_combined(buckets, bc, throttle, stats):
     import time
     import websockets
 
@@ -275,12 +257,12 @@ async def binance_combined(buckets, bc, throttle, stats, legacy):
                     mkt, m, q, p = hit
                     stats.hit(mkt, "BN", q, p)
                     if throttle.allow(q, time.time()):
-                        _emit_trade(bc, mkt, m, q, p, "BN", legacy)
+                        _emit_trade(bc, mkt, m, q, p, "BN")
 
     await _reconnecting("binance-combined", run)
 
 
-async def coinbase_trades(buckets, bc, throttle, stats, legacy):
+async def coinbase_trades(buckets, bc, throttle, stats):
     import time
     import websockets
 
@@ -298,7 +280,7 @@ async def coinbase_trades(buckets, bc, throttle, stats, legacy):
                     mkt, m, q, p = hit
                     stats.hit(mkt, "CB", q, p)
                     if throttle.allow(q, time.time()):
-                        _emit_trade(bc, mkt, m, q, p, "CB", legacy)
+                        _emit_trade(bc, mkt, m, q, p, "CB")
 
     await _reconnecting("coinbase-trades", run)
 
@@ -360,11 +342,11 @@ class FeedStats:
         self.counts, self.notional = {}, {}
 
 
-SYN_START = {"BTC": 64000.0, "ETH": 3200.0, "GOLD": 4100.0, "SPX": 6500.0}
-SYN_RATE = {"BTC": 8, "ETH": 2, "GOLD": 20, "SPX": 0.02}   # expovariate lambda per market
+SYN_START = {"SOL": 182.0, "SPX": 6500.0, "GOLD": 4100.0, "BAM": 32.0}
+SYN_RATE = {"SOL": 6, "SPX": 0.02, "GOLD": 20, "BAM": 3}   # expovariate lambda per market
 
 
-async def synthetic_trades(buckets, bc, throttle, legacy):
+async def synthetic_trades(buckets, bc, throttle):
     import time
     price = dict(SYN_START)
     while True:
@@ -374,7 +356,7 @@ async def synthetic_trades(buckets, bc, throttle, legacy):
                 m, q = random.random() < 0.5, random.expovariate(SYN_RATE[mkt])
                 bucket_trade(buckets[mkt], m, q, price[mkt])
                 if throttle.allow(q, time.time()):
-                    _emit_trade(bc, mkt, m, q, price[mkt], "SYN", legacy)
+                    _emit_trade(bc, mkt, m, q, price[mkt], "SYN")
         await asyncio.sleep(0.2)
 
 
@@ -383,8 +365,6 @@ async def main():
     ap.add_argument("--port", type=int, default=8642)
     ap.add_argument("--synthetic", action="store_true",
                     help="random-walk feeds instead of live sources (offline dev)")
-    ap.add_argument("--no-legacy", dest="legacy", action="store_false",
-                    help="stop emitting v1 BTC lines (once MW v6 is live)")
     args = ap.parse_args()
     buckets = new_buckets()
     bc = Broadcaster()
@@ -392,20 +372,18 @@ async def main():
     throttle = TradeThrottle()
     stats = FeedStats()
     if args.synthetic:
-        asyncio.create_task(synthetic_trades(buckets, bc, throttle, args.legacy))
+        asyncio.create_task(synthetic_trades(buckets, bc, throttle))
     else:
-        asyncio.create_task(binance_combined(buckets, bc, throttle, stats, args.legacy))
-        asyncio.create_task(coinbase_trades(buckets, bc, throttle, stats, args.legacy))
+        asyncio.create_task(binance_combined(buckets, bc, throttle, stats))
+        asyncio.create_task(coinbase_trades(buckets, bc, throttle, stats))
         asyncio.create_task(hyperliquid_trades(buckets, bc, throttle, stats))
         asyncio.create_task(bybit_trades(buckets, bc, throttle, stats))
-    print(f"feedd on 127.0.0.1:{args.port} synthetic={args.synthetic} legacy={args.legacy}", flush=True)
+    print(f"feedd on 127.0.0.1:{args.port} synthetic={args.synthetic}", flush=True)
     tick = 0
     while True:
         await asyncio.sleep(1)
         for mkt in MARKETS:
             bc.send(format_line(mkt, buckets[mkt]))
-        if args.legacy:
-            bc.send(format_line_legacy(buckets["BTC"]))
         for b in buckets.values():
             b["buy"] = b["sell"] = 0.0   # keep last price
         tick = tick + 1

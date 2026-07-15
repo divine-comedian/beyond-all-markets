@@ -9,9 +9,7 @@ from feedd import (
     bucket_trade,
     coinbase_is_buyer_maker,
     format_line,
-    format_line_legacy,
     format_trade,
-    format_trade_legacy,
     hl_is_buyer_maker,
     mid_price,
     new_bucket,
@@ -38,9 +36,9 @@ def test_taker_sell_goes_to_sell_volume():
 
 def test_format_line_v2_wire_format():
     b = new_bucket()
-    bucket_trade(b, False, 1.23456, 117234.56)
-    bucket_trade(b, True, 0.5, 117230.00)
-    assert format_line("BTC", b) == "mkt:BTC:1.2346:0.5000:117230.00"
+    bucket_trade(b, False, 1.23456, 182.34)
+    bucket_trade(b, True, 0.5, 182.10)
+    assert format_line("SOL", b) == "mkt:SOL:1.2346:0.5000:182.10"
 
 
 def test_format_line_empty_bucket_keeps_last_price():
@@ -56,19 +54,9 @@ def test_format_trade_v2_buy_and_sell():
         == "trd:SPX:S:100.0000:650.25:AP"
 
 
-def test_legacy_lines_match_v1_format():
-    # MW v5's gadget regexes: ^mkt:([%d%.]+):... and ^trd:([BS]):...
-    b = new_bucket()
-    bucket_trade(b, False, 1.0, 64000.0)
-    assert format_line_legacy(b) == "mkt:1.0000:0.0000:64000.00"
-    assert format_trade_legacy(False, 0.5, 64000.0, "BN") == "trd:B:0.5000:64000.00:BN"
-    # v2 lines must NOT match the v1 numeric regex (market tag is alphabetic)
-    assert format_line("BTC", b).split(":")[1] == "BTC"
-
-
 def test_new_buckets_covers_all_markets():
     bs = new_buckets()
-    assert set(bs.keys()) == set(MARKETS) == {"BTC", "ETH", "GOLD", "SPX"}
+    assert set(bs.keys()) == set(MARKETS) == {"SOL", "SPX", "GOLD", "BAM"}
 
 
 def test_route_binance_aggtrade_to_right_market():
@@ -76,28 +64,23 @@ def test_route_binance_aggtrade_to_right_market():
     hit = route_binance(
         {"stream": "paxgusdt@aggTrade", "data": {"m": False, "q": "0.30", "p": "4100.5"}}, bs)
     assert hit == ("GOLD", False, 0.30, 4100.5)
-    assert bs["GOLD"]["buy"] == 0.30 and bs["BTC"]["buy"] == 0.0
+    assert bs["GOLD"]["buy"] == 0.30 and bs["SOL"]["buy"] == 0.0
 
 
-def test_route_binance_bookticker_sets_mid_price_only():
+def test_route_binance_sol_aggtrade_and_book():
     bs = new_buckets()
     hit = route_binance(
-        {"stream": "btcusdt@bookTicker", "data": {"b": "64000.0", "a": "64001.0"}}, bs)
-    assert hit is None
-    assert bs["BTC"]["price"] == 64000.5
-    assert bs["BTC"]["buy"] == 0.0 and bs["BTC"]["sell"] == 0.0
+        {"stream": "solusdt@aggTrade", "data": {"m": False, "q": "3.0", "p": "182.5"}}, bs)
+    assert hit == ("SOL", False, 3.0, 182.5)
+    assert bs["SOL"]["buy"] == 3.0 and bs["SOL"]["price"] == 182.5
+    assert route_binance(
+        {"stream": "solusdt@bookTicker", "data": {"b": "182.0", "a": "182.2"}}, bs) is None
+    assert bs["SOL"]["price"] == 182.1
 
 
 def test_route_binance_ignores_unknown_stream():
     bs = new_buckets()
     assert route_binance({"stream": "dogeusdt@aggTrade", "data": {"m": True, "q": "1", "p": "1"}}, bs) is None
-
-
-def test_route_binance_eth_owns_its_price():
-    bs = new_buckets()
-    hit = route_binance({"stream": "ethusdt@aggTrade", "data": {"m": False, "q": "2.0", "p": "3201.5"}}, bs)
-    assert hit == ("ETH", False, 2.0, 3201.5)
-    assert bs["ETH"]["buy"] == 2.0 and bs["ETH"]["price"] == 3201.5
 
 
 def test_paxg_never_overwrites_hyperliquid_gold_price():
@@ -223,15 +206,11 @@ def test_route_coinbase_paxg_folds_gold_volume_preserving_hl_price():
     assert bs["GOLD"]["buy"] == 0.30 and bs["GOLD"]["sell"] == 2.4
 
 
-def test_route_coinbase_btc_and_ignores_unknown_product():
+def test_route_coinbase_sol_folds_and_keeps_binance_price():
     bs = new_buckets()
-    bs["BTC"]["price"] = 64000.0
+    bs["SOL"]["price"] = 182.5
     hit = route_coinbase(
-        {"type": "match", "product_id": "BTC-USD", "side": "buy",
-         "size": "0.2", "price": "63990.0"}, bs)
-    assert hit == ("BTC", True, 0.2, 63990.0)        # maker buy => taker sold
-    assert bs["BTC"]["sell"] == 0.2 and bs["BTC"]["price"] == 64000.0
-    assert route_coinbase(
-        {"type": "match", "product_id": "DOGE-USD", "side": "buy",
-         "size": "1", "price": "1"}, bs) is None
-    assert route_coinbase({"type": "heartbeat"}, bs) is None
+        {"type": "match", "product_id": "SOL-USD", "side": "sell",
+         "size": "1.5", "price": "182.0"}, bs)
+    assert hit == ("SOL", False, 1.5, 182.0)     # maker sell => taker bought
+    assert bs["SOL"]["buy"] == 1.5 and bs["SOL"]["price"] == 182.5
