@@ -40,6 +40,7 @@ synced gadget market_income.lua ──AddTeamResource──> Bulls/Bears economi
   - `market_income.lua` — 1s income ticks: `baseline + volume × PER_BTC`, deep storage
   - `market_rounds.lua` — commander death = scored round end: nuke both bases, wipe all units, respawn fresh (session scoreboard)
   - `market_reinforce.lua` — market events spawn units directly: sustained price flip rescues the field underdog; 0.5+ BTC whale buckets deploy squads for their side
+  - `market_scrapper.lua` — drops one naval reclaimer per sea team each minute (capped) to clear ocean wrecks; ocean scrap yields 90% less metal so reclaim stays a bonus, not the econ
   - `market_debug.lua` — heartbeat log line every 10s (`MKTWAR f=...`)
 - `feed/feedd.py` — trade bucketing + TCP broadcast (`--synthetic` for offline dev); `pytest feed/tests`
 - `scripts/run-war.sh` — supervisor: restarts feedd/engine on crash
@@ -58,6 +59,12 @@ synced gadget market_income.lua ──AddTeamResource──> Bulls/Bears economi
 | `WHALE_SPAWN_BTC` | 0.5 | 1s volume bucket that instantly deploys a squad for that side |
 | `COMEBACK_COEF/SCALE/MAX` | 1.0 / 0.5 / 4 | true comeback: income boost for the side losing the fight (live army deficit), exponential and boost-only |
 | `COMEBACK_DROP_RATIO/HOLD/COOLDOWN` | 2.0 / 4s / 45s | army-deficit reinforcement drops for the behind side |
+| `SCRAP_DROP_PERIOD_SEC` / `SCRAP_MAX_ALIVE` | 60s / 6 | naval scrapper cadence and per-team cap |
+| `SCRAP_YIELD` / `SCRAP_SEA_DEPTH` | 0.10 / -15 | ocean wreck metal multiplier (−90%) and the deep-water cutoff it applies below |
+
+GOLD is the thinnest lane, so `feed/feedd.py` aggregates the most gold venues: Hyperliquid
+`xyz:GOLD` (price owner) + Binance PAXG/XAUT (USDT+USDC) + Bybit XAUT + Coinbase PAXG — all
+1 token = 1 troy oz, folded in as volume without rescale.
 
 Quiet market ≈ 0.002-0.01 BTC/s (≈ +1-4 metal/s); a 1 BTC/s burst ≈ +400 metal/s flood.
 Edit values in `mutator/.../market_income.lua` + `war.env` together.

@@ -18,6 +18,7 @@ from feedd import (
     new_buckets,
     route_binance,
     route_bybit,
+    route_coinbase,
     route_hyperliquid,
 )
 
@@ -206,3 +207,31 @@ def test_coinbase_taker_buy_feeds_buy_volume():
 
 def test_mid_price():
     assert mid_price(64000.0, 64001.0) == 64000.5
+
+
+def test_route_coinbase_paxg_folds_gold_volume_preserving_hl_price():
+    # Coinbase PAXG is a secondary GOLD venue: it adds volume but never overwrites
+    # the Hyperliquid gold price.
+    bs = new_buckets()
+    route_hyperliquid({"channel": "trades", "data": [
+        {"coin": "xyz:GOLD", "side": "A", "px": "4103.2", "sz": "2.4"}]}, bs)
+    hit = route_coinbase(
+        {"type": "match", "product_id": "PAXG-USD", "side": "sell",
+         "size": "0.30", "price": "4094.0"}, bs)
+    assert hit == ("GOLD", False, 0.30, 4094.0)      # maker sell => taker bought
+    assert bs["GOLD"]["price"] == 4103.2             # HL price preserved
+    assert bs["GOLD"]["buy"] == 0.30 and bs["GOLD"]["sell"] == 2.4
+
+
+def test_route_coinbase_btc_and_ignores_unknown_product():
+    bs = new_buckets()
+    bs["BTC"]["price"] = 64000.0
+    hit = route_coinbase(
+        {"type": "match", "product_id": "BTC-USD", "side": "buy",
+         "size": "0.2", "price": "63990.0"}, bs)
+    assert hit == ("BTC", True, 0.2, 63990.0)        # maker buy => taker sold
+    assert bs["BTC"]["sell"] == 0.2 and bs["BTC"]["price"] == 64000.0
+    assert route_coinbase(
+        {"type": "match", "product_id": "DOGE-USD", "side": "buy",
+         "size": "1", "price": "1"}, bs) is None
+    assert route_coinbase({"type": "heartbeat"}, bs) is None

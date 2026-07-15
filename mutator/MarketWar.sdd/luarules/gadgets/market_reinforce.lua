@@ -35,6 +35,9 @@ local COMEBACK_DROP_MIN_ARMY = 1500   -- strong-side floor (match income's COMEB
 -- market's native unit. Flank markets trade chunkier (fewer, bigger prints —
 -- measured ~28/min SPX, ~14/min GOLD), so their bars are set lower (~$15k)
 -- than BTC's ($32k). ETH parity with BTC (~$32k at ~$3.2k/ETH).
+-- GOLD is the thinnest lane; rather than lower its whale bar (which risks drop-spam
+-- once volume returns), we THICKEN the source feed instead — see feed/feedd.py, which
+-- now folds Binance XAUT + USDC gold pairs and Coinbase PAXG into the GOLD bucket.
 -- lane kind decides squad composition AND spawn point: sea lanes drop ships
 -- IN their ocean (per-team deep-water coords from the heightmap), air lanes
 -- drop aircraft at base, land lanes drop the mixed ground squad at base.

@@ -5,7 +5,9 @@ Markets:
     BTC  — Binance btcusdt aggTrades + Coinbase matches (price: Binance book)
     SPX  — Hyperliquid xyz:SP500 perp (TradeXYZ, S&P-DJI licensed), 24/7
     GOLD — Hyperliquid xyz:GOLD perp (COMEX-benchmarked) owns the price;
-           Binance paxgusdt (PAX Gold, oz-denominated) folds in extra volume
+           volume folds in from Binance PAXG/XAUT (USDT+USDC), Bybit XAUT, and
+           Coinbase PAXG — all 1 token = 1 troy oz, same unit as xyz:GOLD, so no
+           rescale. GOLD is the thinnest lane, so it aggregates the most venues.
 
 Hyperliquid WS is public/keyless and trades carry the aggressor side
 ("B" = taker bought, "A" = taker sold) — verified live 2026-07-12:
@@ -28,13 +30,24 @@ import random
 
 BINANCE_COMBINED = ("wss://stream.binance.com:9443/stream?streams="
                     "btcusdt@aggTrade/ethusdt@aggTrade/paxgusdt@aggTrade/"
+                    # extra GOLD volume: XAUT (Tether Gold, ~$15M/day — Binance's
+                    # is 3x Bybit's) + the USDC-quoted gold pairs. All oz-denominated,
+                    # same unit as xyz:GOLD, so they fold in without rescale.
+                    "xautusdt@aggTrade/paxgusdc@aggTrade/xautusdc@aggTrade/"
                     "btcusdt@bookTicker/ethusdt@bookTicker/paxgusdt@bookTicker")
 COINBASE_WS = "wss://ws-feed.exchange.coinbase.com"
 HYPERLIQUID_WS = "wss://api.hyperliquid.xyz/ws"
 BYBIT_WS = "wss://stream.bybit.com/v5/public/spot"
 
 MARKETS = ("BTC", "ETH", "GOLD", "SPX")
-BINANCE_SYMBOL_MKT = {"btcusdt": "BTC", "ethusdt": "ETH", "paxgusdt": "GOLD"}
+BINANCE_SYMBOL_MKT = {
+    "btcusdt": "BTC", "ethusdt": "ETH",
+    # GOLD volume: PAX Gold + Tether Gold, USDT and USDC quotes (all 1 token = 1 oz)
+    "paxgusdt": "GOLD", "xautusdt": "GOLD", "paxgusdc": "GOLD", "xautusdc": "GOLD",
+}
+# Coinbase match stream: BTC (price via Binance book) + PAXG (extra GOLD volume,
+# HL keeps the gold price). Coinbase is always a secondary venue — never price owner.
+COINBASE_PRODUCT_MKT = {"BTC-USD": "BTC", "PAXG-USD": "GOLD"}
 HL_COIN_MKT = {"xyz:SP500": "SPX", "xyz:GOLD": "GOLD"}
 HL_PRICE_OWNER = {"SPX": True, "GOLD": True}   # Hyperliquid owns these prices
 # Bybit xStocks/RWA spot: extra volume for the thin flank markets.
@@ -169,6 +182,27 @@ def route_bybit(msg, buckets):
     return out
 
 
+def route_coinbase(msg, buckets):
+    """Route one Coinbase match into its market bucket; returns (mkt, m, qty, price) or None.
+
+    Secondary venue: never owns a price, so an established bucket price (Binance
+    book for BTC, Hyperliquid for GOLD) is preserved. Seeds the price only if none
+    exists yet, mirroring the PAXG-before-Hyperliquid case.
+    """
+    if msg.get("type") not in ("match", "last_match"):
+        return None
+    mkt = COINBASE_PRODUCT_MKT.get(msg.get("product_id"))
+    if not mkt:
+        return None
+    m = coinbase_is_buyer_maker(msg["side"])
+    q, p = float(msg["size"]), float(msg["price"])
+    px0 = buckets[mkt]["price"]
+    bucket_trade(buckets[mkt], m, q, p)
+    if px0:
+        buckets[mkt]["price"] = px0
+    return (mkt, m, q, p)
+
+
 class TradeThrottle:
     """Cap relayed trades per wall-second; big prints always pass."""
 
@@ -228,7 +262,7 @@ def _emit_trade(bc, mkt, m, q, p, venue, legacy):
         bc.send(format_trade_legacy(m, q, p, venue))
 
 
-async def binance_combined(buckets, bc, throttle, legacy):
+async def binance_combined(buckets, bc, throttle, stats, legacy):
     import time
     import websockets
 
@@ -239,13 +273,14 @@ async def binance_combined(buckets, bc, throttle, legacy):
                 hit = route_binance(json.loads(raw), buckets)
                 if hit:
                     mkt, m, q, p = hit
+                    stats.hit(mkt, "BN", q, p)
                     if throttle.allow(q, time.time()):
                         _emit_trade(bc, mkt, m, q, p, "BN", legacy)
 
     await _reconnecting("binance-combined", run)
 
 
-async def coinbase_trades(buckets, bc, throttle, legacy):
+async def coinbase_trades(buckets, bc, throttle, stats, legacy):
     import time
     import websockets
 
@@ -253,22 +288,17 @@ async def coinbase_trades(buckets, bc, throttle, legacy):
         async with websockets.connect(COINBASE_WS, ping_interval=20) as ws:
             await ws.send(json.dumps({
                 "type": "subscribe",
-                "product_ids": ["BTC-USD"],
+                "product_ids": list(COINBASE_PRODUCT_MKT),
                 "channels": ["matches"],
             }))
-            print("coinbase match stream connected", flush=True)
+            print("coinbase match stream connected (" + ", ".join(COINBASE_PRODUCT_MKT) + ")", flush=True)
             async for raw in ws:
-                t = json.loads(raw)
-                if t.get("type") not in ("match", "last_match"):
-                    continue
-                m = coinbase_is_buyer_maker(t["side"])
-                q, p = float(t["size"]), float(t["price"])
-                px0 = buckets["BTC"]["price"]
-                bucket_trade(buckets["BTC"], m, q, p)
-                if px0:
-                    buckets["BTC"]["price"] = px0   # binance book owns price continuity
-                if throttle.allow(q, time.time()):
-                    _emit_trade(bc, "BTC", m, q, p, "CB", legacy)
+                hit = route_coinbase(json.loads(raw), buckets)
+                if hit:
+                    mkt, m, q, p = hit
+                    stats.hit(mkt, "CB", q, p)
+                    if throttle.allow(q, time.time()):
+                        _emit_trade(bc, mkt, m, q, p, "CB", legacy)
 
     await _reconnecting("coinbase-trades", run)
 
@@ -364,8 +394,8 @@ async def main():
     if args.synthetic:
         asyncio.create_task(synthetic_trades(buckets, bc, throttle, args.legacy))
     else:
-        asyncio.create_task(binance_combined(buckets, bc, throttle, args.legacy))
-        asyncio.create_task(coinbase_trades(buckets, bc, throttle, args.legacy))
+        asyncio.create_task(binance_combined(buckets, bc, throttle, stats, args.legacy))
+        asyncio.create_task(coinbase_trades(buckets, bc, throttle, stats, args.legacy))
         asyncio.create_task(hyperliquid_trades(buckets, bc, throttle, stats))
         asyncio.create_task(bybit_trades(buckets, bc, throttle, stats))
     print(f"feedd on 127.0.0.1:{args.port} synthetic={args.synthetic} legacy={args.legacy}", flush=True)
