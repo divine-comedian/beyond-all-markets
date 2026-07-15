@@ -3,12 +3,14 @@
 # on death. Usage: run-war.sh [live|synthetic] [spring-headless|spring]
 set -uo pipefail
 source "$(dirname "$0")/../config/war.env"
+export BAM_MINT PUMP_WS_URL
 MODE="${1:-live}"
 BIN="${2:-spring-headless}"
 mkdir -p "$DATA_DIR/logs"
 
 feed_args=""
 [ "$MODE" = "synthetic" ] && feed_args="--synthetic"
+[ "$MODE" = "live" ] && [ -z "${BAM_MINT:-}" ] && feed_args="$feed_args --bam-proxy"
 
 start_feed() {
     python3 "$ROOT/feed/feedd.py" --port "$FEED_PORT" $feed_args \

@@ -110,6 +110,14 @@ end
 
 function gadget:GameFrame(f)
     if f % 30 ~= 0 then return end            -- once per second
+    local active = (GG.MarketWar and GG.MarketWar.roundActive) or {}
+    if active.bam == false then
+        -- BAM round is between rounds: drop stale queued trades so a fresh
+        -- round can't inherit a pre-existing army from the last one.
+        queue[ASSET_TEAM] = {}
+        queue[USD_TEAM] = {}
+        return
+    end
     local a = drain(ASSET_TEAM)
     local u = drain(USD_TEAM)
     if a > 0 or u > 0 then
