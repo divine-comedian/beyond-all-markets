@@ -1,7 +1,7 @@
 function widget:GetInfo()
     return {
         name    = "Market Feed Bridge",
-        desc    = "Relays feedd BTC trade ticks into synced state (host only)",
+        desc    = "Relays feedd SOL/BAM trade ticks into synced state (host only)",
         author  = "bar-market-war",
         date    = "2026",
         license = "MIT",
@@ -55,7 +55,7 @@ local nextWatch = 0
 
 local pendingReload = {} -- teamID -> game frame to reload at
 local pendingReport = {} -- teamID -> game frame to report recovery at
-local LANE_TEAMS = { btc = {0, 1}, spx = {2, 3}, gold = {4, 5}, eth = {6, 7} }
+local LANE_TEAMS = { sol = {0, 1}, spx = {2, 3}, gold = {4, 5}, bam = {6, 7} }
 
 -- called from eventLog when a round end is detected (the intermission param
 -- change — a signal PROVEN to fire; the old mkt_reset param path never did)
@@ -104,10 +104,10 @@ end
 -- (headless) engine, so Echo goes to the host infolog and NEVER to a
 -- spectator's on-screen console.
 local LANES_HB = {
-    { key = "BTC",  asset = 0, usd = 1 },
+    { key = "SOL",  asset = 0, usd = 1 },
     { key = "SPX",  asset = 2, usd = 3 },
     { key = "GOLD", asset = 4, usd = 5 },
-    { key = "ETH",  asset = 6, usd = 7 },
+    { key = "BAM",  asset = 6, usd = 7 },
 }
 local lastHeartbeat = -1
 local prevDrop = 0
@@ -138,15 +138,15 @@ local function eventLog()
             Spring.GetGameRulesParam("mkt_push_team") or -1,
             Spring.GetGameRulesParam("mkt_push_n") or 0))
     end
-    for _, l in ipairs({ "btc", "spx", "gold", "eth" }) do
+    for _, l in ipairs({ "sol", "spx", "gold", "bam" }) do
         local inter = Spring.GetGameRulesParam("mkt_intermission_" .. l) or 0
         if inter > 0 and inter ~= prevInter[l] then
             prevInter[l] = inter
             scheduleReactivation(l)
             tlog(string.format("MKTWAR-ROUND %s to team %d (wins now a=%d u=%d)", l,
                 Spring.GetGameRulesParam("mkt_roundwinner_" .. l) or -1,
-                Spring.GetGameRulesParam("mkt_wins" .. ({btc=0,spx=2,gold=4,eth=6})[l]) or 0,
-                Spring.GetGameRulesParam("mkt_wins" .. ({btc=1,spx=3,gold=5,eth=7})[l]) or 0))
+                Spring.GetGameRulesParam("mkt_wins" .. ({sol=0,spx=2,gold=4,bam=6})[l]) or 0,
+                Spring.GetGameRulesParam("mkt_wins" .. ({sol=1,spx=3,gold=5,bam=7})[l]) or 0))
         end
     end
 end

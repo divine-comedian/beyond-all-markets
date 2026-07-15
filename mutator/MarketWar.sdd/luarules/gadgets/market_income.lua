@@ -10,14 +10,16 @@ end
 
 local DEBUG = false
 
--- Pairs: market -> {asset team, usd team, metal/energy per volume unit, whale threshold}
--- Multipliers are notional-normalized (~0.00625 metal per USD): 1 BTC ~ $64k,
--- 1 GOLD contract = 1 oz ~ $4.1k, 1 SP500 contract ~ $7.6k.
+-- Pairs: market -> {asset team, usd team, metal/energy per volume unit}
+-- Multipliers notional-normalized (~0.00625 metal/USD): 1 SOL ~ $182,
+-- 1 GOLD contract = 1 oz ~ $4.1k, 1 SP500 contract ~ $7.6k. BAM is SOL-notional
+-- (deliberately generous — thin memecoin flow should still fund a base; its
+-- main army is the per-trade spawn, not income).
 local PAIRS = {
-    BTC  = { asset = 0, usd = 1, m = 400, e = 4000 },
+    SOL  = { asset = 0, usd = 1, m = 1.2, e = 12 },
     SPX  = { asset = 2, usd = 3, m = 47,  e = 470 },
     GOLD = { asset = 4, usd = 5, m = 25,  e = 250 },
-    ETH  = { asset = 6, usd = 7, m = 11,  e = 110 },   -- ETH ~$1.8k (live-checked), not $3.2k
+    BAM  = { asset = 6, usd = 7, m = 1.5, e = 15 },
 }
 local BASELINE_METAL  = 6
 local BASELINE_ENERGY = 60

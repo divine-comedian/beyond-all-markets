@@ -34,7 +34,9 @@ local COMEBACK_DROP_MIN_ARMY = 1500   -- strong-side floor (match income's COMEB
 -- Lane pairs; whale = 1s volume bucket that triggers a deploy, in the
 -- market's native unit. Flank markets trade chunkier (fewer, bigger prints —
 -- measured ~28/min SPX, ~14/min GOLD), so their bars are set lower (~$15k)
--- than BTC's ($32k). ETH parity with BTC (~$32k at ~$3.2k/ETH).
+-- than SOL's. (SOL whale 180 ≈ $32k dollar-parity with the old 0.5 BTC bar —
+-- SOL taker flow is BTC-order-of-magnitude, so a small bar would spam. BAM 20
+-- SOL is the memecoin spectacle bar.)
 -- GOLD is the thinnest lane; rather than lower its whale bar (which risks drop-spam
 -- once volume returns), we THICKEN the source feed instead — see feed/feedd.py, which
 -- now folds Binance XAUT + USDC gold pairs and Coinbase PAXG into the GOLD bucket.
@@ -42,10 +44,10 @@ local COMEBACK_DROP_MIN_ARMY = 1500   -- strong-side floor (match income's COMEB
 -- IN their ocean (per-team deep-water coords from the heightmap), air lanes
 -- drop aircraft at base, land lanes drop the mixed ground squad at base.
 local PAIRS = {
-    { key = "btc",  mkt = "BTC",  asset = 0, usd = 1, whale = 0.5, kind = "land" },
+    { key = "sol",  mkt = "SOL",  asset = 0, usd = 1, whale = 180, kind = "land" },
     { key = "spx",  mkt = "SPX",  asset = 2, usd = 3, whale = 2,   kind = "sea" },
     { key = "gold", mkt = "GOLD", asset = 4, usd = 5, whale = 4,   kind = "sea" },
-    { key = "eth",  mkt = "ETH",  asset = 6, usd = 7, whale = 10,  kind = "air" },
+    { key = "bam",  mkt = "BAM",  asset = 6, usd = 7, whale = 20,  kind = "air", flipPct = 2.0 },
 }
 
 -- Deep-water drop points per sea team (from the map heightmap, ~-40..-70 depth)
@@ -124,6 +126,7 @@ end
 
 local function checkFlip(pr, f)
     local hist = pr.hist
+    local flipPct = pr.flipPct or FLIP_PCT
     hist[#hist + 1] = (GG.MarketWar.price and GG.MarketWar.price[pr.mkt]) or 0
     if #hist > 60 then table.remove(hist, 1) end
     if #hist < 2 or hist[1] <= 0 then return end
@@ -138,7 +141,7 @@ local function checkFlip(pr, f)
 
     -- rising price favors the asset team; falling favors USD
     local favored = pct60 >= 0 and pr.asset or pr.usd
-    if favored == underdog and math.abs(pct60) >= FLIP_PCT then
+    if favored == underdog and math.abs(pct60) >= flipPct then
         pr.flipHold = pr.flipHold + 1
     else
         pr.flipHold = 0
@@ -146,7 +149,7 @@ local function checkFlip(pr, f)
     end
 
     if pr.flipHold >= FLIP_HOLD_SEC and f - pr.lastFlip >= FLIP_COOLDOWN_SEC * 30 then
-        local steps = math.floor(math.abs(pct60) / FLIP_PCT)
+        local steps = math.floor(math.abs(pct60) / flipPct)
         local n = math.min(FLIP_MAX_SQUAD, FLIP_BASE_SQUAD * steps)
         pr.lastFlip = f
         pr.flipHold = 0

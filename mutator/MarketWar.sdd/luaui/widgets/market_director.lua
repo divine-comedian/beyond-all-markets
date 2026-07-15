@@ -59,10 +59,10 @@ local heat = {}                     -- heat[gx*GRID+gz] = number
 -- Each lane is a PAN: the camera glides along the battle axis between the pair's
 -- bases. The sea lanes (SP500/GOLD) glide right over the water where the boats fight.
 local LANES = {
-    { name = "BTC",   ax = 4600, az = 7400,  bx = 7600,  bz = 4900 },  -- isthmus (land)
+    { name = "SOL",   ax = 4600, az = 7400,  bx = 7600,  bz = 4900 },  -- isthmus (land)
     { name = "SP500", ax = 1150, az = 5400,  bx = 7400,  bz = 1200 },  -- NW sea
     { name = "GOLD",  ax = 5740, az = 12000, bx = 11600, bz = 5000 },  -- SE sea
-    { name = "ETH",   ax = 2200, az = 11750, bx = 10150, bz = 600 },   -- corners (air)
+    { name = "BAM",   ax = 2200, az = 11750, bx = 10150, bz = 600 },   -- corners (air)
 }
 local MACRO = { x = mapX * 0.5, z = mapZ * 0.5 }
 

@@ -17,10 +17,10 @@ end
 if not gadgetHandler:IsSyncedCode() then return end
 
 local ASSET = {
-    [0] = "BTC",  [1] = "USD-BTC",
+    [0] = "SOL",  [1] = "USD-SOL",
     [2] = "SP500", [3] = "USD-SP500",
     [4] = "GOLD", [5] = "USD-GOLD",
-    [6] = "ETH",  [7] = "USD-ETH",
+    [6] = "BAM",  [7] = "USD-BAM",
 }
 
 function gadget:Initialize()

@@ -18,7 +18,7 @@ if not gadgetHandler:IsSyncedCode() then return end
 --      (market_income.lua counts !isBuilder), so this does NOT feed the comeback.
 --   2. Scale OCEAN wreck metal to SCRAP_YIELD at feature creation. This deliberately
 --      keeps scrapping a housekeeping bonus, not the main metal source (income stays
---      market-driven). Scoped by GROUND depth so the land lane (BTC) is untouched.
+--      market-driven). Scoped by GROUND depth so the land lane (SOL) is untouched.
 
 -- Tuning (mirror config/war.env)
 local DROP_PERIOD_SEC = 60     -- one scrapper per sea team per minute

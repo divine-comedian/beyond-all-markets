@@ -19,10 +19,10 @@ local NUKE_CEGS = { "nuclearexplosion", "advanced-nuke", "commander-blast" }
 
 -- Lane pairs (mirror market_income.lua / gen-startscript.sh)
 local PAIRS = {
-    { key = "btc",  asset = 0, usd = 1 },
+    { key = "sol",  asset = 0, usd = 1 },
     { key = "spx",  asset = 2, usd = 3 },
     { key = "gold", asset = 4, usd = 5 },
-    { key = "eth",  asset = 6, usd = 7 },
+    { key = "bam",  asset = 6, usd = 7 },
 }
 local teamPair = {}   -- teamID -> pair
 for _, pr in ipairs(PAIRS) do
@@ -47,10 +47,10 @@ local SEA_DROP = {   -- deep water per sea team (mirror market_conveyor.lua)
     [5] = { x = 6800, z = 11000 },
 }
 local INSURE_DEF = {  -- teamID -> factory unitdef name
-    [0] = "armlab", [1] = "corlab",     -- BTC: ground
+    [0] = "armlab", [1] = "corlab",     -- SOL: ground
     [2] = "armsy",  [3] = "corsy",      -- SP500: naval
     [4] = "armsy",  [5] = "corsy",      -- GOLD: naval
-    [6] = "armap",  [7] = "corap",      -- ETH: air
+    [6] = "armap",  [7] = "corap",      -- BAM: air
 }
 local noFactorySince = {}   -- teamID -> frame
 local insurePos             -- forward declaration (defined below)

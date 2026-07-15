@@ -14,10 +14,10 @@ local BUILD = "MW v12"
 
 -- Teams (match gen-startscript.sh)
 local TEAMNAME = {
-    [0] = "BTC",  [1] = "USD-BTC",
+    [0] = "SOL",  [1] = "USD-SOL",
     [2] = "SP500", [3] = "USD-SP500",
     [4] = "GOLD", [5] = "USD-GOLD",
-    [6] = "ETH",  [7] = "USD-ETH",
+    [6] = "BAM",  [7] = "USD-BAM",
 }
 local TEAMCOL = {
     [0] = { 0.97, 0.58, 0.10 }, [1] = { 0.30, 0.69, 0.31 },
@@ -33,19 +33,19 @@ local WHITE = { 0.95, 0.95, 0.95 }
 -- toward the lane's corner (ox/oz are fractions of map size) so the three
 -- tickers spread apart instead of crowding the center
 -- Tickers sit at FIXED, on-lane positions (tx,tz in elmos), one per quadrant so they
--- spread out and never get shoved off-map by base-relative offset math. ETH is the air
+-- spread out and never get shoved off-map by base-relative offset math. BAM is the air
 -- lane spanning NE<->SW, so it shows a ticker in each of those two quadrants (tx2,tz2).
 local LANES = {
     { key = "spx",  mkt = "SPX",  asset = 2, usd = 3, label = "SP500", tx = 4275, tz = 3300 },
-    { key = "btc",  mkt = "BTC",  asset = 0, usd = 1, label = "BTC",   tx = 6100, tz = 6150 },
+    { key = "sol",  mkt = "SOL",  asset = 0, usd = 1, label = "SOL",   tx = 6100, tz = 6150 },
     { key = "gold", mkt = "GOLD", asset = 4, usd = 5, label = "GOLD",  tx = 8670, tz = 8500 },
-    { key = "eth",  mkt = "ETH",  asset = 6, usd = 7, label = "ETH",   tx = 9200, tz = 2800, tx2 = 2800, tz2 = 9200 },
+    { key = "bam",  mkt = "BAM",  asset = 6, usd = 7, label = "BAM",   tx = 9200, tz = 2800, tx2 = 2800, tz2 = 9200 },
 }
 
-local VOL_CAP    = 5                  -- full-scale pulse (BTC-equivalent notional units)
+local VOL_CAP    = 5                  -- full-scale pulse (SOL-equivalent notional units)
 local PULSE_LIFE = 2.2
 local WHALE_ROWS = 6
-local WHALE_MIN  = { BTC = 0.10, SPX = 0.8, GOLD = 1.6, ETH = 2.0 }   -- ~$6.4k notional each
+local WHALE_MIN  = { SOL = 20, SPX = 0.8, GOLD = 1.6, BAM = 5 }   -- lane whale display floors
 
 local basePos   = {}                  -- teamID -> {x,y,z}
 local pulses    = {}                  -- {team, metal, energy, vol, born}
@@ -66,7 +66,7 @@ local function logScale(v)
 end
 
 local function OnTrade(isBuy, qty, price, venue, mkt)
-    mkt = mkt or "BTC"
+    mkt = mkt or "SOL"
     if qty >= (WHALE_MIN[mkt] or 0.1) then
         table.insert(whales, 1, { isBuy = isBuy == 1, qty = qty, price = price,
                                   venue = venue or "?", mkt = mkt })

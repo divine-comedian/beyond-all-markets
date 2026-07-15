@@ -30,10 +30,10 @@ local SEA_DROP = {
     [5] = { x = 6800, z = 11000 },  -- USD-GOLD, SE ocean (base at south edge)
 }
 local PAIRS = {
-    { key = "btc",  asset = 0, usd = 1 },
+    { key = "sol",  asset = 0, usd = 1 },
     { key = "spx",  asset = 2, usd = 3 },
     { key = "gold", asset = 4, usd = 5 },
-    { key = "eth",  asset = 6, usd = 7 },
+    { key = "bam",  asset = 6, usd = 7 },
 }
 
 local isCommander = {}
@@ -219,14 +219,14 @@ local function pushTeam(teamID, enemyTeam, enemyPoint, f)
 
     -- AIR RAID: fight-move only engages what's in LOS, and nothing scouts
     -- for the bombers — they arrived blind over fog, circled, went home
-    -- (seen live on both ETH sides). The referee runs the air campaign:
+    -- (seen live on both BAM sides). The referee runs the air campaign:
     -- idle scouts PATROL the enemy base (lifting fog for everyone), idle
     -- bombers ground-attack the coordinates of a live enemy factory — a
     -- position strike needs no sighting, so the air base dies even unseen.
     if AIR_TEAMS[teamID] then
         -- target priority: enemy factory (kill production), else the enemy
         -- COMMANDER — bombing the airbase forever never ENDS a round, and the
-        -- ETH lane went 0-for-11 rounds while both sides razed each other's
+        -- BAM lane went 0-for-11 rounds while both sides razed each other's
         -- factories. Only a commander kill scores, so once the enemy has no
         -- production left, the bombers go for the head.
         local fx, fz, comm
@@ -290,7 +290,7 @@ local function pushTeam(teamID, enemyTeam, enemyPoint, f)
     end
 
     if false then   -- MKTWAR: air lanes now use lane-ownership too (below) —
-        -- ETH and USD-ETH must hunt EACH OTHER, not fly cover for allies;
+        -- BAM and USD-BAM must hunt EACH OTHER, not fly cover for allies;
         -- rounds in the air lane should resolve like every other lane
     else
         local pushables = {}
