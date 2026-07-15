@@ -242,11 +242,23 @@ function insurePos(teamID)   -- assigns the forward-declared local
         return math.max(64, math.min(Game.mapSizeX - 64, anchor.x + 128)),
                math.max(64, math.min(Game.mapSizeZ - 64, anchor.z + 128))
     end
-    -- naval: first comfortably deep water walking from the commander toward the drop
+    -- naval: first OPEN deep water walking from the commander toward the drop.
+    -- "open" = the spot AND a ring around it are deep, so the shipyard never lands
+    -- against one of the SE sea islands (the respawn-on-island bug: probe found
+    -- isolated land at ~(9000,8000) and (9500,9500) in team-4's water).
+    local RING = 320
+    local function openWater(x, z)
+        if Spring.GetGroundHeight(x, z) >= -12 then return false end
+        if Spring.GetGroundHeight(x + RING, z) >= -14 then return false end
+        if Spring.GetGroundHeight(x - RING, z) >= -14 then return false end
+        if Spring.GetGroundHeight(x, z + RING) >= -14 then return false end
+        if Spring.GetGroundHeight(x, z - RING) >= -14 then return false end
+        return true
+    end
     for t = 0, 1, 0.02 do
         local x = anchor.x + (drop.x - anchor.x) * t
         local z = anchor.z + (drop.z - anchor.z) * t
-        if Spring.GetGroundHeight(x, z) < -12 then
+        if openWater(x, z) then
             return x, z
         end
     end
