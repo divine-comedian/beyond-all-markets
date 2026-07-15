@@ -32,13 +32,14 @@ local WHITE = { 0.95, 0.95, 0.95 }
 -- Lanes: ticker anchored at the midpoint between the pair's bases, nudged
 -- toward the lane's corner (ox/oz are fractions of map size) so the three
 -- tickers spread apart instead of crowding the center
+-- Tickers sit at FIXED, on-lane positions (tx,tz in elmos), one per quadrant so they
+-- spread out and never get shoved off-map by base-relative offset math. ETH is the air
+-- lane spanning NE<->SW, so it shows a ticker in each of those two quadrants (tx2,tz2).
 local LANES = {
-    { key = "spx",  mkt = "SPX",  asset = 2, usd = 3, label = "SP500", ox = -0.15, oz = -0.15 },
-    { key = "btc",  mkt = "BTC",  asset = 0, usd = 1, label = "BTC",   ox = 0,     oz = 0 },
-    { key = "gold", mkt = "GOLD", asset = 4, usd = 5, label = "GOLD",  ox = 0.05,  oz = -0.05 },
-    -- corner=true: the ETH lane spans corner to corner, so its ticker renders
-    -- at BOTH back corners (near each base) instead of the cluttered middle
-    { key = "eth",  mkt = "ETH",  asset = 6, usd = 7, label = "ETH", corner = true },
+    { key = "spx",  mkt = "SPX",  asset = 2, usd = 3, label = "SP500", tx = 4275, tz = 3300 },
+    { key = "btc",  mkt = "BTC",  asset = 0, usd = 1, label = "BTC",   tx = 6100, tz = 6150 },
+    { key = "gold", mkt = "GOLD", asset = 4, usd = 5, label = "GOLD",  tx = 8670, tz = 8500 },
+    { key = "eth",  mkt = "ETH",  asset = 6, usd = 7, label = "ETH",   tx = 9200, tz = 2800, tx2 = 2800, tz2 = 9200 },
 }
 
 local VOL_CAP    = 5                  -- full-scale pulse (BTC-equivalent notional units)
@@ -202,20 +203,8 @@ function widget:DrawScreen()
     end
 
     for _, l in ipairs(LANES) do
-        local ba, bu = basePos[l.asset], basePos[l.usd]
-        if ba and bu then
-            if l.corner then
-                -- one ticker at each back corner near each base; offsets are
-                -- screen-tuned (NE ticker sits 11% south of its base, SW
-                -- ticker 6% north) so neither crowds the map edge
-                drawTicker(l, ba.x + 0.06 * Game.mapSizeX, ba.z + 0.11 * Game.mapSizeZ, 40 * s)
-                drawTicker(l, bu.x - 0.06 * Game.mapSizeX, bu.z - 0.06 * Game.mapSizeZ, 40 * s)
-            else
-                local mx = (ba.x + bu.x) / 2 + (l.ox or 0) * Game.mapSizeX
-                local mz = (ba.z + bu.z) / 2 + (l.oz or 0) * Game.mapSizeZ
-                drawTicker(l, mx, mz, 48 * s)
-            end
-        end
+        drawTicker(l, l.tx, l.tz, 48 * s)
+        if l.tx2 then drawTicker(l, l.tx2, l.tz2, 40 * s) end
     end
 
     ---------------------------------------------------------------- base labels + income pulses
@@ -260,7 +249,7 @@ function widget:DrawScreen()
     -- in the default font — suspected cause of the old scoreboard's fragments)
     local rtW = 250 * s
     local rtX = 14 * s
-    local rtTop = vsy * 0.78
+    local rtTop = vsy * 0.48   -- moved down (was 0.78) to clear the minimap
     local rowH = 24 * s
     gl.Color(0, 0, 0, 0.5)
     gl.Rect(rtX - 8 * s, rtTop - (#LANES + 1) * rowH - 8 * s, rtX + rtW, rtTop + 24 * s)
