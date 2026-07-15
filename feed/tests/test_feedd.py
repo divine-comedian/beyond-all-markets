@@ -8,6 +8,7 @@ from feedd import (
     TradeThrottle,
     bucket_trade,
     coinbase_is_buyer_maker,
+    format_bam,
     format_line,
     format_trade,
     hl_is_buyer_maker,
@@ -18,7 +19,10 @@ from feedd import (
     route_bybit,
     route_coinbase,
     route_hyperliquid,
+    route_pumpdev,
 )
+
+import feedd
 
 
 def test_taker_buy_goes_to_buy_volume():
@@ -221,3 +225,56 @@ def test_route_coinbase_ignores_unknown_product_and_non_match():
     assert route_coinbase({"type": "match", "product_id": "DOGE-USD",
                            "side": "buy", "size": "1", "price": "1"}, bs) is None
     assert route_coinbase({"type": "heartbeat"}, bs) is None
+
+
+def test_route_pumpdev_buy_folds_solnotional_and_marketcap_price():
+    bs = new_buckets()
+    seen = set()
+    feedd.BAM_MINT = "BAMmintpump"
+    hit = route_pumpdev({
+        "txType": "buy", "mint": "BAMmintpump", "solAmount": 1.485,
+        "tokenAmount": 39873287.0, "marketCapSol": 38.88,
+        "traderPublicKey": "EXHzrCmF62gmus8", "signature": "4mwNN2zdSIG"}, bs, seen)
+    assert hit == (False, 1.485, 38.88, "EXHzrCmF", "4mwNN2zd")   # buy => taker bought
+    assert bs["BAM"]["buy"] == 1.485 and bs["BAM"]["price"] == 38.88
+
+
+def test_route_pumpdev_sell_and_signature_dedupe():
+    bs = new_buckets()
+    seen = set()
+    feedd.BAM_MINT = "BAMmintpump"
+    msg = {"txType": "sell", "mint": "BAMmintpump", "solAmount": 3.11,
+           "marketCapSol": 32.7, "traderPublicKey": "FaJxvj5rCHhm6",
+           "signature": "5ff6dhBtSIG"}
+    first = route_pumpdev(msg, bs, seen)
+    assert first == (True, 3.11, 32.7, "FaJxvj5r", "5ff6dhBt")    # sell => taker sold
+    assert bs["BAM"]["sell"] == 3.11
+    assert route_pumpdev(msg, bs, seen) is None                  # dup signature dropped
+    assert bs["BAM"]["sell"] == 3.11
+
+
+def test_route_pumpdev_filters_foreign_mint_and_non_trades():
+    bs = new_buckets()
+    seen = set()
+    feedd.BAM_MINT = "BAMmintpump"
+    assert route_pumpdev({"txType": "buy", "mint": "OTHERpump", "solAmount": 1.0,
+                          "marketCapSol": 5.0, "signature": "x"}, bs, seen) is None
+    assert route_pumpdev({"txType": "create", "mint": "BAMmintpump",
+                          "signature": "y"}, bs, seen) is None
+
+
+def test_route_pumpdev_proxy_mode_accepts_any_mint():
+    bs = new_buckets()
+    seen = set()
+    feedd.BAM_MINT = ""     # proxy: no mint filter
+    hit = route_pumpdev({"txType": "buy", "mint": "whatever", "solAmount": 0.4,
+                         "marketCapSol": 28.0, "traderPublicKey": "J6THBML",
+                         "signature": "z1"}, bs, seen)
+    assert hit == (False, 0.4, 28.0, "J6THBML", "z1")
+
+
+def test_format_bam_line():
+    assert format_bam(False, 1.485, 38.88, "EXHzrCmF", "4mwNN2zd") \
+        == "bam:B:1.4850:38.8800:EXHzrCmF:4mwNN2zd"
+    assert format_bam(True, 3.11, 32.7, "FaJxvj5r", "5ff6dhBt") \
+        == "bam:S:3.1100:32.7000:FaJxvj5r:5ff6dhBt"

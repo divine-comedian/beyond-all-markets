@@ -8,7 +8,9 @@ Markets:
            volume folds in from Binance PAXG/XAUT (USDT+USDC), Bybit XAUT, and
            Coinbase PAXG — all 1 token = 1 troy oz, same unit as xyz:GOLD, so no
            rescale. GOLD is the thinnest lane, so it aggregates the most venues.
-    BAM  — synthetic-only in this build; no live source is wired up yet.
+    BAM  — pump.fun memecoin via PumpDev websocket (BAM_MINT set) or a live
+           hot-mint stand-in (--bam-proxy); price signal is marketCapSol, not
+           per-token price. Falls back to synthetic-only income otherwise.
 
 Hyperliquid WS is public/keyless and trades carry the aggressor side
 ("B" = taker bought, "A" = taker sold) — verified live 2026-07-12:
@@ -17,11 +19,13 @@ xyz:SP500 did ~$105k notional / 45s on a SUNDAY.
 Wire format v2 (one line per market per second to every connected client):
     mkt:<MKT>:<buyVol>:<sellVol>:<price>      MKT in {SOL, SPX, GOLD, BAM}
     trd:<MKT>:<B|S>:<qty>:<price>:<venue>
+    bam:<B|S>:<solAmount>:<marketCapSol>:<addr8>:<sig8>   BAM only, never throttled
 """
 import argparse
 import asyncio
 import json
 import math
+import os
 import random
 
 BINANCE_COMBINED = ("wss://stream.binance.com:9443/stream?streams="
@@ -187,6 +191,46 @@ def route_coinbase(msg, buckets):
     return (mkt, m, q, p)
 
 
+# BAM (pump.fun memecoin) via PumpDev websocket. BAM_MINT empty => proxy mode
+# (adopt a live hot mint as a stand-in). Price signal = marketCapSol (SOL),
+# because per-token price (~3e-8 SOL) formats to 0.00 and would kill flip/HUD.
+BAM_MINT = os.environ.get("BAM_MINT", "")
+PUMP_WS_URL = os.environ.get("PUMP_WS_URL", "wss://pumpdev.io/ws")
+
+
+def route_pumpdev(msg, buckets, seen):
+    """Route one PumpDev trade into buckets['BAM']; dedupe by signature.
+
+    Returns (is_buyer_maker, solAmount, marketCapSol, addr8, sig8) or None.
+    is_buyer_maker = (txType == 'sell'): a taker sell feeds the USD-BAM side.
+    """
+    if not isinstance(msg, dict):
+        return None
+    if msg.get("txType") not in ("buy", "sell"):
+        return None
+    if BAM_MINT and msg.get("mint") != BAM_MINT:
+        return None
+    sig = msg.get("signature", "")
+    if not sig or sig in seen:
+        return None
+    seen.add(sig)
+    if len(seen) > 4096:
+        seen.clear()
+        seen.add(sig)
+    m = (msg["txType"] == "sell")
+    sol = float(msg.get("solAmount", 0.0))
+    mcap = float(msg.get("marketCapSol", 0.0))
+    addr8 = str(msg.get("traderPublicKey", ""))[:8]
+    sig8 = str(sig)[:8]
+    bucket_trade(buckets["BAM"], m, sol, mcap)
+    return (m, sol, mcap, addr8, sig8)
+
+
+def format_bam(m, sol, mcap, addr8, sig8):
+    side = "S" if m else "B"
+    return f"bam:{side}:{sol:.4f}:{mcap:.4f}:{addr8}:{sig8}"
+
+
 class TradeThrottle:
     """Cap relayed trades per wall-second; big prints always pass."""
 
@@ -322,6 +366,39 @@ async def bybit_trades(buckets, bc, throttle, stats):
     await _reconnecting("bybit-trades", run)
 
 
+async def pumpdev_trades(buckets, bc, throttle, stats):
+    import time
+    import websockets
+    seen = set()
+
+    async def run():
+        async with websockets.connect(PUMP_WS_URL, ping_interval=20) as ws:
+            if BAM_MINT:
+                await ws.send(json.dumps({"method": "subscribeTokenTrade",
+                                          "keys": [BAM_MINT]}))
+                print(f"pumpdev connected (mint {BAM_MINT})", flush=True)
+            else:
+                await ws.send(json.dumps({"method": "subscribeNewToken"}))
+                print("pumpdev connected (proxy: newToken adoption)", flush=True)
+            while True:
+                # staleness watchdog: no message in 125s -> raise -> reconnect
+                raw = await asyncio.wait_for(ws.recv(), timeout=125)
+                msg = json.loads(raw)
+                if (not BAM_MINT and isinstance(msg, dict)
+                        and msg.get("txType") == "create" and msg.get("mint")):
+                    await ws.send(json.dumps({"method": "subscribeTokenTrade",
+                                              "keys": [msg["mint"]]}))
+                hit = route_pumpdev(msg, buckets, seen)
+                if hit:
+                    m, sol, mcap, addr8, sig8 = hit
+                    stats.hit("BAM", "PF", sol, mcap)
+                    bc.send(format_bam(m, sol, mcap, addr8, sig8))   # never throttled
+                    if throttle.allow(sol, time.time()):
+                        bc.send(format_trade("BAM", m, sol, mcap, "PF"))
+
+    await _reconnecting("pumpdev", run)
+
+
 class FeedStats:
     """Per-market/venue capture counters, printed every 60s for thin-volume
     diagnostics (how many trades per minute are we actually seeing?)."""
@@ -349,8 +426,21 @@ SYN_RATE = {"SOL": 6, "SPX": 0.02, "GOLD": 20, "BAM": 3}   # expovariate lambda 
 async def synthetic_trades(buckets, bc, throttle):
     import time
     price = dict(SYN_START)
+    n = 0
     while True:
         for mkt in MARKETS:
+            if mkt == "BAM":
+                price[mkt] *= math.exp(random.gauss(0, 0.02))   # memecoin volatility
+                for _ in range(random.randint(0, 4)):
+                    m = random.random() < 0.5
+                    sol = random.expovariate(SYN_RATE[mkt])      # median ~0.23, tail 50+
+                    n += 1
+                    addr8, sig8 = f"SYN{n % 97:05d}"[:8], f"sig{n:05d}"[:8]
+                    bucket_trade(buckets[mkt], m, sol, price[mkt])
+                    bc.send(format_bam(m, sol, price[mkt], addr8, sig8))
+                    if throttle.allow(sol, time.time()):
+                        bc.send(format_trade(mkt, m, sol, price[mkt], "SYN"))
+                continue
             price[mkt] *= math.exp(random.gauss(0, 0.0002))
             for _ in range(random.randint(0, 3)):
                 m, q = random.random() < 0.5, random.expovariate(SYN_RATE[mkt])
@@ -365,6 +455,8 @@ async def main():
     ap.add_argument("--port", type=int, default=8642)
     ap.add_argument("--synthetic", action="store_true",
                     help="random-walk feeds instead of live sources (offline dev)")
+    ap.add_argument("--bam-proxy", action="store_true",
+                    help="adopt a live hot pump.fun mint as a BAM stand-in when BAM_MINT is unset")
     args = ap.parse_args()
     buckets = new_buckets()
     bc = Broadcaster()
@@ -378,6 +470,10 @@ async def main():
         asyncio.create_task(coinbase_trades(buckets, bc, throttle, stats))
         asyncio.create_task(hyperliquid_trades(buckets, bc, throttle, stats))
         asyncio.create_task(bybit_trades(buckets, bc, throttle, stats))
+        if BAM_MINT or args.bam_proxy:
+            asyncio.create_task(pumpdev_trades(buckets, bc, throttle, stats))
+        else:
+            print("BAM: no BAM_MINT and no --bam-proxy; BAM runs on baseline income", flush=True)
     print(f"feedd on 127.0.0.1:{args.port} synthetic={args.synthetic}", flush=True)
     tick = 0
     while True:
