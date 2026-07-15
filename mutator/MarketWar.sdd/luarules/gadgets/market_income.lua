@@ -36,8 +36,13 @@ local SMOOTH_ALPHA = 1 / 20
 -- ever shrinks under the AI's feet. Applied through the same EMA as income.
 local RALLY_WINDOW = 300   -- seconds of price history (5m)
 local RALLY_SCALE  = 0.5   -- % move per e-fold: 0.25%≈1.3x, 0.5%≈1.9x, 1%≈4.2x
-local RALLY_COEF   = 0.5   -- mult = 1 + COEF * (e^(gain/SCALE) - 1)
-local RALLY_MAX    = 8     -- multiplier ceiling
+-- 2026-07-15 balance pass: overnight data showed the USD/Bears side winning ~68% of
+-- rounds during a market selloff — the boost-only rally amplifies whichever side the
+-- market favors into a runaway. Dampened (COEF 0.5->0.35, MAX 8->4) so the trending
+-- side gets help without snowballing. Reversible; see market-war-balancing memory for
+-- the deeper fix (make it a TRUE comeback keyed to round-win/army differential).
+local RALLY_COEF   = 0.35  -- mult = 1 + COEF * (e^(gain/SCALE) - 1)   (was 0.5)
+local RALLY_MAX    = 4      -- multiplier ceiling                       (was 8)
 
 local function rallyTarget(gainPct)
     if gainPct <= 0 then return 1 end
