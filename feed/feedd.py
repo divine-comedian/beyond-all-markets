@@ -2,7 +2,8 @@
 """Multi-market trade feeds -> per-second buy/sell volume buckets -> TCP broadcast.
 
 Markets:
-    SOL  — Binance solusdt aggTrades + Coinbase matches (price: Binance book)
+    SOL  — Coinbase SOL-USD matches own the price; Binance solusdt folds volume
+           (binance.us on 451 geoblock, since cloud IPs can't reach binance.com)
     SPX  — Hyperliquid xyz:SP500 perp (TradeXYZ, S&P-DJI licensed), 24/7
     GOLD — Hyperliquid xyz:GOLD perp (COMEX-benchmarked) owns the price;
            volume folds in from Binance PAXG/XAUT (USDT+USDC), Bybit XAUT, and
@@ -34,6 +35,10 @@ BINANCE_COMBINED = ("wss://stream.binance.com:9443/stream?streams="
                     # all oz-denominated (same unit as xyz:GOLD), folded without rescale.
                     "xautusdt@aggTrade/paxgusdc@aggTrade/xautusdc@aggTrade/"
                     "solusdt@bookTicker/paxgusdt@bookTicker")
+# binance.us failover (reached when binance.com 451s): only SOL matters there —
+# it's the geoblock-critical lane. GOLD keeps Hyperliquid + Bybit + Coinbase PAXG.
+BINANCE_US_COMBINED = ("wss://stream.binance.us:9443/stream?streams="
+                       "solusdt@aggTrade/solusdt@bookTicker")
 COINBASE_WS = "wss://ws-feed.exchange.coinbase.com"
 HYPERLIQUID_WS = "wss://api.hyperliquid.xyz/ws"
 BYBIT_WS = "wss://stream.bybit.com/v5/public/spot"
@@ -46,7 +51,12 @@ BINANCE_SYMBOL_MKT = {
 # Coinbase match stream: SOL (price via Binance book) + PAXG (extra GOLD volume).
 COINBASE_PRODUCT_MKT = {"SOL-USD": "SOL", "PAXG-USD": "GOLD"}
 HL_COIN_MKT = {"xyz:SP500": "SPX", "xyz:GOLD": "GOLD"}
-HL_PRICE_OWNER = {"SPX": True, "GOLD": True}   # Hyperliquid owns these prices
+# Which venue owns each market's price. Every other venue folds VOLUME only and
+# never overwrites an established price (but any venue may bootstrap a price of 0
+# so a lane is never stuck dead while its owner is briefly unreachable). SOL is
+# Coinbase-owned (binance.com 451s from cloud IPs); BAM's price is its pump.fun
+# marketCapSol, set by route_pumpdev.
+PRICE_OWNER = {"SOL": "CB", "SPX": "HL", "GOLD": "HL", "BAM": "PD"}
 # Bybit xStocks/RWA spot: extra volume for the thin flank markets.
 # normalize=True: instrument unit differs from the primary (SPYX share ~$745
 # vs SP500 index contract ~$7563) — qty is rescaled by price ratio on ingest.
@@ -82,6 +92,17 @@ def bucket_trade(bucket, is_buyer_maker, qty, price):
     bucket["price"] = price
 
 
+def apply_trade(bucket, mkt, venue, is_buyer_maker, qty, price):
+    """Add a trade's volume; set the price only if `venue` owns this market's
+    price (PRICE_OWNER), or the bucket has no price yet (bootstrap). This lets
+    secondary venues deepen the volume flow without fighting over the price,
+    while still seeding a lane whose owner venue hasn't ticked (or is down)."""
+    px0 = bucket["price"]
+    bucket_trade(bucket, is_buyer_maker, qty, price)
+    if PRICE_OWNER.get(mkt) != venue and px0:
+        bucket["price"] = px0
+
+
 def format_line(mkt, bucket):
     return f"mkt:{mkt}:{bucket['buy']:.4f}:{bucket['sell']:.4f}:{bucket['price']:.2f}"
 
@@ -95,9 +116,9 @@ def route_binance(frame, buckets):
     """Route one combined-stream frame into the right market bucket.
 
     Returns (mkt, is_buyer_maker, qty, price) for aggTrades, None otherwise.
-    GOLD nuance: Hyperliquid's COMEX-benchmarked perp owns the gold price;
-    PAXG (a different instrument, same oz unit) contributes volume only, so
-    its trades and book never overwrite an established gold price.
+    Binance is a VOLUME-only secondary for every market it carries (Coinbase
+    owns SOL, Hyperliquid owns GOLD) — its trades and book only fold volume in,
+    and only seed a price when the owner venue hasn't set one yet.
     """
     stream = frame.get("stream", "")
     data = frame.get("data", {})
@@ -105,16 +126,13 @@ def route_binance(frame, buckets):
     mkt = BINANCE_SYMBOL_MKT.get(symbol)
     if not mkt:
         return None
-    price_owner = mkt not in HL_PRICE_OWNER
     if stream.endswith("@aggTrade"):
         m, q, p = data["m"], float(data["q"]), float(data["p"])
-        px0 = buckets[mkt]["price"]
-        bucket_trade(buckets[mkt], m, q, p)
-        if not price_owner and px0:
-            buckets[mkt]["price"] = px0
+        apply_trade(buckets[mkt], mkt, "BN", m, q, p)
         return (mkt, m, q, p)
-    if stream.endswith("@bookTicker") and price_owner:
-        # continuous mid-price so tradeless seconds still tick
+    if stream.endswith("@bookTicker") and buckets[mkt]["price"] == 0:
+        # bootstrap only: seed a mid-price so a lane isn't dead before its
+        # owner venue ticks; once priced, the owner keeps the continuity.
         buckets[mkt]["price"] = mid_price(float(data["b"]), float(data["a"]))
     return None
 
@@ -162,10 +180,7 @@ def route_bybit(msg, buckets):
         eq = q
         if cfg["normalize"] and primary > 0:
             eq = q * p / primary          # venue units -> primary units
-        px0 = buckets[mkt]["price"]
-        bucket_trade(buckets[mkt], m, eq, p)
-        if px0:
-            buckets[mkt]["price"] = px0   # primary venue owns the price
+        apply_trade(buckets[mkt], mkt, "BY", m, eq, p)   # Hyperliquid owns price
         out.append((mkt, m, eq, p))
     return out
 
@@ -173,9 +188,10 @@ def route_bybit(msg, buckets):
 def route_coinbase(msg, buckets):
     """Route one Coinbase match into its market bucket; returns (mkt, m, qty, price) or None.
 
-    Secondary venue: never owns a price, so an established bucket price (Binance
-    book for SOL, Hyperliquid for GOLD) is preserved. Seeds the price only if none
-    exists yet, mirroring the PAXG-before-Hyperliquid case.
+    Coinbase is the PRIMARY price venue for SOL (deep, and unlike binance.com not
+    geo-blocked on cloud IPs, so it keeps SOL alive through a 451). For GOLD it's
+    a secondary (Hyperliquid owns the price) — apply_trade keeps HL's price via
+    PRICE_OWNER and only folds Coinbase PAXG volume in.
     """
     if msg.get("type") not in ("match", "last_match"):
         return None
@@ -184,10 +200,7 @@ def route_coinbase(msg, buckets):
         return None
     m = coinbase_is_buyer_maker(msg["side"])
     q, p = float(msg["size"]), float(msg["price"])
-    px0 = buckets[mkt]["price"]
-    bucket_trade(buckets[mkt], m, q, p)
-    if px0:
-        buckets[mkt]["price"] = px0
+    apply_trade(buckets[mkt], mkt, "CB", m, q, p)
     return (mkt, m, q, p)
 
 
@@ -288,20 +301,46 @@ def _emit_trade(bc, mkt, m, q, p, venue):
     bc.send(format_trade(mkt, m, q, p, venue))
 
 
+def binance_url(geoblocked):
+    """binance.com is HTTP 451-geoblocked from many cloud IPs; binance.us serves
+    the same combined-stream API and is reachable, so we fail over to it."""
+    return BINANCE_US_COMBINED if geoblocked else BINANCE_COMBINED
+
+
+def is_geoblock(exc):
+    """True if a websocket handshake was rejected for legal/geo reasons (HTTP
+    451). websockets raises with the status on the exception or its response."""
+    if "451" in str(exc):
+        return True
+    resp = getattr(exc, "response", None)
+    return getattr(resp, "status_code", None) == 451
+
+
 async def binance_combined(buckets, bc, throttle, stats):
     import time
     import websockets
 
+    state = {"geoblocked": False}   # sticky: once .com 451s, stay on .us
+
     async def run():
-        async with websockets.connect(BINANCE_COMBINED, ping_interval=20) as ws:
-            print("binance combined stream connected", flush=True)
-            async for raw in ws:
-                hit = route_binance(json.loads(raw), buckets)
-                if hit:
-                    mkt, m, q, p = hit
-                    stats.hit(mkt, "BN", q, p)
-                    if throttle.allow(q, time.time()):
-                        _emit_trade(bc, mkt, m, q, p, "BN")
+        url = binance_url(state["geoblocked"])
+        try:
+            async with websockets.connect(url, ping_interval=20) as ws:
+                host = "binance.us" if state["geoblocked"] else "binance.com"
+                print(f"{host} combined stream connected", flush=True)
+                async for raw in ws:
+                    hit = route_binance(json.loads(raw), buckets)
+                    if hit:
+                        mkt, m, q, p = hit
+                        stats.hit(mkt, "BN", q, p)
+                        if throttle.allow(q, time.time()):
+                            _emit_trade(bc, mkt, m, q, p, "BN")
+        except Exception as e:
+            if not state["geoblocked"] and is_geoblock(e):
+                state["geoblocked"] = True
+                print("binance.com geoblocked (HTTP 451) -> failing over to binance.us",
+                      flush=True)
+            raise   # let _reconnecting back off and retry on the new url
 
     await _reconnecting("binance-combined", run)
 

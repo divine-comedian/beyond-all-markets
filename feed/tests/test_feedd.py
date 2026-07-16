@@ -4,14 +4,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from feedd import (
+    BINANCE_COMBINED,
+    BINANCE_US_COMBINED,
     MARKETS,
+    PRICE_OWNER,
     TradeThrottle,
+    apply_trade,
+    binance_url,
     bucket_trade,
     coinbase_is_buyer_maker,
     format_bam,
     format_line,
     format_trade,
     hl_is_buyer_maker,
+    is_geoblock,
     mid_price,
     new_bucket,
     new_buckets,
@@ -71,15 +77,26 @@ def test_route_binance_aggtrade_to_right_market():
     assert bs["GOLD"]["buy"] == 0.30 and bs["SOL"]["buy"] == 0.0
 
 
-def test_route_binance_sol_aggtrade_and_book():
+def test_route_binance_sol_bootstraps_then_yields_price_to_coinbase():
+    # Binance is a volume-only secondary for SOL now. It seeds the price while
+    # the bucket is empty (so the lane isn't dead on a 451), but once Coinbase
+    # (the owner) has priced it, Binance folds volume without moving it.
     bs = new_buckets()
     hit = route_binance(
         {"stream": "solusdt@aggTrade", "data": {"m": False, "q": "3.0", "p": "182.5"}}, bs)
     assert hit == ("SOL", False, 3.0, 182.5)
-    assert bs["SOL"]["buy"] == 3.0 and bs["SOL"]["price"] == 182.5
+    assert bs["SOL"]["buy"] == 3.0 and bs["SOL"]["price"] == 182.5    # bootstrap seed
+    route_coinbase(
+        {"type": "match", "product_id": "SOL-USD", "side": "sell", "size": "1.0", "price": "183.0"}, bs)
+    assert bs["SOL"]["price"] == 183.0                                # Coinbase owns it
+    route_binance(
+        {"stream": "solusdt@aggTrade", "data": {"m": True, "q": "5.0", "p": "181.0"}}, bs)
+    assert bs["SOL"]["price"] == 183.0                                # Binance can't move it
+    assert bs["SOL"]["buy"] == 4.0 and bs["SOL"]["sell"] == 5.0       # but volume still counts
+    # bookTicker only bootstraps a still-empty lane, never overrides a priced one
     assert route_binance(
         {"stream": "solusdt@bookTicker", "data": {"b": "182.0", "a": "182.2"}}, bs) is None
-    assert bs["SOL"]["price"] == 182.1
+    assert bs["SOL"]["price"] == 183.0
 
 
 def test_route_binance_ignores_unknown_stream():
@@ -210,14 +227,54 @@ def test_route_coinbase_paxg_folds_gold_volume_preserving_hl_price():
     assert bs["GOLD"]["buy"] == 0.30 and bs["GOLD"]["sell"] == 2.4
 
 
-def test_route_coinbase_sol_folds_and_keeps_binance_price():
+def test_route_coinbase_owns_sol_price_over_binance():
+    # SOL is Coinbase-owned now (binance.com 451s from cloud IPs, which used to
+    # freeze SOL). Coinbase sets the price; Binance only folds volume.
     bs = new_buckets()
-    bs["SOL"]["price"] = 182.5
+    route_binance({"stream": "solusdt@aggTrade", "data": {"m": False, "q": "2.0", "p": "182.0"}}, bs)
     hit = route_coinbase(
         {"type": "match", "product_id": "SOL-USD", "side": "sell",
-         "size": "1.5", "price": "182.0"}, bs)
-    assert hit == ("SOL", False, 1.5, 182.0)     # maker sell => taker bought
-    assert bs["SOL"]["buy"] == 1.5 and bs["SOL"]["price"] == 182.5
+         "size": "1.5", "price": "183.4"}, bs)
+    assert hit == ("SOL", False, 1.5, 183.4)     # maker sell => taker bought
+    assert bs["SOL"]["price"] == 183.4           # Coinbase moved it off the Binance seed
+    assert bs["SOL"]["buy"] == 3.5               # 2.0 (BN) + 1.5 (CB) both count
+
+
+def test_binance_url_fails_over_to_binance_us_on_geoblock():
+    assert binance_url(geoblocked=False) == BINANCE_COMBINED
+    assert "binance.com" in binance_url(False)
+    assert binance_url(geoblocked=True) == BINANCE_US_COMBINED
+    assert "binance.us" in binance_url(True) and "solusdt" in binance_url(True)
+
+
+def test_is_geoblock_detects_http_451():
+    assert is_geoblock(Exception("server rejected WebSocket connection: HTTP 451"))
+    assert not is_geoblock(Exception("server rejected WebSocket connection: HTTP 429"))
+
+    class Resp:
+        status_code = 451
+
+    class Rejected(Exception):
+        response = Resp()
+
+    assert is_geoblock(Rejected("rejected"))
+
+
+def test_price_owner_map_covers_every_market():
+    assert set(PRICE_OWNER) == set(MARKETS)
+    assert PRICE_OWNER["SOL"] == "CB"
+    assert PRICE_OWNER["GOLD"] == "HL" and PRICE_OWNER["SPX"] == "HL"
+    assert PRICE_OWNER["BAM"] == "PD"
+
+
+def test_apply_trade_bootstraps_price_but_secondary_cannot_override():
+    b = new_bucket()
+    apply_trade(b, "SOL", "BN", is_buyer_maker=False, qty=1.0, price=182.0)  # secondary seeds 0-price
+    assert b["price"] == 182.0
+    apply_trade(b, "SOL", "BN", is_buyer_maker=False, qty=1.0, price=181.0)  # secondary can't move it
+    assert b["price"] == 182.0 and b["buy"] == 2.0
+    apply_trade(b, "SOL", "CB", is_buyer_maker=True, qty=1.0, price=184.0)   # owner moves it
+    assert b["price"] == 184.0
 
 
 def test_route_coinbase_ignores_unknown_product_and_non_match():
