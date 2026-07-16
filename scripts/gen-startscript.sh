@@ -59,8 +59,8 @@ cat > "$DATA_DIR/script.txt" <<EOF
     [TEAM3] { TeamLeader=0; AllyTeam=1; Side=Cortex; StartPosX=1150;  StartPosZ=5400;  RgbColor=0.15 0.85 0.60; }
     [TEAM4] { TeamLeader=0; AllyTeam=0; Side=Armada; StartPosX=11600; StartPosZ=7300;  RgbColor=0.95 0.80 0.15; }  // MKTWAR: was Z=5000 (mid-landmass); moved to the SE coast (~z7500 waterline) so the naval commander spawns AT the water, not a 2500-elmo trek inland
     [TEAM5] { TeamLeader=0; AllyTeam=1; Side=Cortex; StartPosX=5740;  StartPosZ=12000; RgbColor=0.60 0.85 0.25; }
-    [TEAM6] { TeamLeader=0; AllyTeam=0; Side=Armada; StartPosX=10150; StartPosZ=600;   RgbColor=0.62 0.40 0.95; }
-    [TEAM7] { TeamLeader=0; AllyTeam=1; Side=Cortex; StartPosX=2200;  StartPosZ=11750; RgbColor=0.20 0.60 0.35; }
+    [TEAM6] { TeamLeader=0; AllyTeam=0; Side=Armada; StartPosX=10150; StartPosZ=600;  RgbColor=0.62 0.40 0.95; }  // MKTWAR: BAM asset — NE-corner land (kept)
+    [TEAM7] { TeamLeader=0; AllyTeam=1; Side=Cortex; StartPosX=8700;  StartPosZ=900;  RgbColor=0.20 0.60 0.35; }  // MKTWAR: BAM USD — moved from SW corner (2200,11750) into the N land strip so both BAM bases share the NE-north pocket; their fight (~1500-elmo frontage along the N edge, both >4000 from map center) no longer marches diagonally through the SOL isthmus. team7 fights E toward team6, away from SP500's base at 7400,1200
     [ALLYTEAM0] { NumAllies=0; }
     [ALLYTEAM1] { NumAllies=0; }
 }
