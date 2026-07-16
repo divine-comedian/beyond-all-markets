@@ -4,8 +4,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from feedd import (
+    BINANCE_COMBINED,
+    BINANCE_US_COMBINED,
     MARKETS,
+    PRICE_OWNER,
     TradeThrottle,
+    apply_trade,
+    binance_url,
     bucket_trade,
     coinbase_is_buyer_maker,
     format_line,
@@ -13,11 +18,13 @@ from feedd import (
     format_trade,
     format_trade_legacy,
     hl_is_buyer_maker,
+    is_geoblock,
     mid_price,
     new_bucket,
     new_buckets,
     route_binance,
     route_bybit,
+    route_coinbase,
     route_hyperliquid,
 )
 
@@ -92,11 +99,84 @@ def test_route_binance_ignores_unknown_stream():
     assert route_binance({"stream": "dogeusdt@aggTrade", "data": {"m": True, "q": "1", "p": "1"}}, bs) is None
 
 
-def test_route_binance_eth_owns_its_price():
+def test_route_binance_eth_bootstraps_then_yields_price_to_coinbase():
+    # Binance is a volume-only secondary for ETH now. It seeds the price while
+    # the bucket is empty (so the lane isn't dead), but once Coinbase (the
+    # owner) has set a price, Binance folds volume without moving it.
     bs = new_buckets()
     hit = route_binance({"stream": "ethusdt@aggTrade", "data": {"m": False, "q": "2.0", "p": "3201.5"}}, bs)
     assert hit == ("ETH", False, 2.0, 3201.5)
-    assert bs["ETH"]["buy"] == 2.0 and bs["ETH"]["price"] == 3201.5
+    assert bs["ETH"]["buy"] == 2.0 and bs["ETH"]["price"] == 3201.5   # bootstrap seed
+    route_coinbase({"type": "match", "product_id": "ETH-USD", "side": "buy", "size": "1.0", "price": "3210.0"}, bs)
+    assert bs["ETH"]["price"] == 3210.0                                # Coinbase owns it (taker sold => sell)
+    route_binance({"stream": "ethusdt@aggTrade", "data": {"m": True, "q": "5.0", "p": "3190.0"}}, bs)
+    assert bs["ETH"]["price"] == 3210.0                                # Binance can't move it
+    assert bs["ETH"]["buy"] == 2.0 and bs["ETH"]["sell"] == 6.0        # but volume still counts (1.0 + 5.0)
+
+
+def test_coinbase_routes_eth_and_btc_by_product_id():
+    bs = new_buckets()
+    assert route_coinbase(
+        {"type": "match", "product_id": "ETH-USD", "side": "sell", "size": "3.0", "price": "3200.0"}, bs) \
+        == ("ETH", False, 3.0, 3200.0)
+    assert route_coinbase(
+        {"type": "match", "product_id": "BTC-USD", "side": "buy", "size": "0.4", "price": "64000.0"}, bs) \
+        == ("BTC", True, 0.4, 64000.0)
+    assert bs["ETH"]["buy"] == 3.0 and bs["ETH"]["price"] == 3200.0    # ETH is alive on Coinbase
+    assert bs["BTC"]["sell"] == 0.4 and bs["BTC"]["price"] == 64000.0
+
+
+def test_coinbase_owns_btc_price_over_binance():
+    # The old bug: Binance owned BTC and Coinbase couldn't move it, so a 451
+    # froze BTC. Now Coinbase owns BTC; Binance only folds volume.
+    bs = new_buckets()
+    route_coinbase({"type": "match", "product_id": "BTC-USD", "side": "buy", "size": "0.1", "price": "64500.0"}, bs)
+    route_binance({"stream": "btcusdt@aggTrade", "data": {"m": False, "q": "0.2", "p": "64000.0"}}, bs)
+    route_binance({"stream": "btcusdt@bookTicker", "data": {"b": "63900.0", "a": "63901.0"}}, bs)
+    assert bs["BTC"]["price"] == 64500.0                               # Coinbase price preserved
+    assert bs["BTC"]["buy"] == 0.2 and bs["BTC"]["sell"] == 0.1        # both venues' volume
+
+
+def test_coinbase_ignores_unknown_product_and_non_matches():
+    bs = new_buckets()
+    assert route_coinbase({"type": "subscriptions", "channels": []}, bs) is None
+    assert route_coinbase({"type": "match", "product_id": "DOGE-USD", "side": "buy", "size": "1", "price": "1"}, bs) is None
+
+
+def test_binance_url_fails_over_to_binance_us_on_geoblock():
+    assert binance_url(geoblocked=False) == BINANCE_COMBINED
+    assert "binance.com" in binance_url(False)
+    assert binance_url(geoblocked=True) == BINANCE_US_COMBINED
+    assert "binance.us" in binance_url(True)
+
+
+def test_is_geoblock_detects_http_451():
+    assert is_geoblock(Exception("server rejected WebSocket connection: HTTP 451"))
+    assert not is_geoblock(Exception("server rejected WebSocket connection: HTTP 429"))
+
+    class Resp:
+        status_code = 451
+
+    class Rejected(Exception):
+        response = Resp()
+
+    assert is_geoblock(Rejected("rejected"))
+
+
+def test_price_owner_map_covers_every_market():
+    assert set(PRICE_OWNER) == set(MARKETS)
+    assert PRICE_OWNER["BTC"] == "CB" and PRICE_OWNER["ETH"] == "CB"
+    assert PRICE_OWNER["GOLD"] == "HL" and PRICE_OWNER["SPX"] == "HL"
+
+
+def test_apply_trade_bootstraps_price_but_secondary_cannot_override():
+    b = new_bucket()
+    apply_trade(b, "BTC", "BN", is_buyer_maker=False, qty=0.1, price=64000.0)  # secondary seeds 0-price
+    assert b["price"] == 64000.0
+    apply_trade(b, "BTC", "BN", is_buyer_maker=False, qty=0.1, price=64010.0)  # secondary can't move it
+    assert b["price"] == 64000.0 and b["buy"] == 0.2
+    apply_trade(b, "BTC", "CB", is_buyer_maker=True, qty=0.1, price=64100.0)   # owner moves it
+    assert b["price"] == 64100.0
 
 
 def test_paxg_never_overwrites_hyperliquid_gold_price():
