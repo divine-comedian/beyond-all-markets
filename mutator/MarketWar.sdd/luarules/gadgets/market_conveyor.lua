@@ -152,7 +152,7 @@ end
 -- 700) or one of the 8 garrison units nearest home. Air lanes keep the
 -- parked-at-base rule (sorties already work; returning flights must not be
 -- bounced).
-local AIR_TEAMS = { [6] = true, [7] = true }
+local AIR_TEAMS = { [0] = true, [1] = true }   -- BAM<->SOL swap: SOL (0/1) is the air lane now
 
 -- Factory foreman: production must not depend on AI sanity. Any factory
 -- whose build queue sits empty across two sweeps gets a small batch of
@@ -169,8 +169,8 @@ local SQUADS = {
              cor = { "corveng", "corshad", "corshad", "corfink" } },
 }
 local ASSET_TEAMS = { [0] = true, [2] = true, [4] = true, [6] = true }
-local TEAM_KIND = { [0] = "land", [1] = "land", [2] = "sea", [3] = "sea",
-                    [4] = "sea", [5] = "sea", [6] = "air", [7] = "air" }
+local TEAM_KIND = { [0] = "air",  [1] = "air",  [2] = "sea", [3] = "sea",
+                    [4] = "sea", [5] = "sea", [6] = "land", [7] = "land" }  -- BAM<->SOL swap: SOL(0/1)=air, BAM(6/7)=land
 local emptySince = {}   -- factory unitID -> first frame seen with empty queue
 
 local function foreman(teamID, f)
@@ -208,7 +208,9 @@ end
 -- different coast of the isthmus, and under fog (+jammers) the two streams
 -- pass each other unseen. Ground units are routed VIA the choke point so
 -- the armies meet head-on in the middle.
-local FUNNEL = { [0] = { x = 6100, z = 6150 }, [1] = { x = 6100, z = 6150 } }
+-- BAM<->SOL swap: BAM (6/7) holds the mid isthmus now, so its ground units
+-- route via the choke to meet head-on.
+local FUNNEL = { [6] = { x = 6100, z = 6150 }, [7] = { x = 6100, z = 6150 } }
 
 local function pushTeam(teamID, enemyTeam, enemyPoint, f)
     local base = GG.MarketWar.startPos and GG.MarketWar.startPos[teamID]

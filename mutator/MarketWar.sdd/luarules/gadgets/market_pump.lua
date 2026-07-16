@@ -27,17 +27,17 @@ local TIER3_VOL        = 20     -- window V_net (SOL) to start mixing T3
 
 local ASSET_TEAM, USD_TEAM = 6, 7
 
--- Full roster minus naval/hover. T1 names mirror market_reinforce (validated
--- live); T2/T3 verified present in the installed game archive. Composition is
--- symmetric per side: fighter + bomber + raider/rocket/arty/tank.
+-- GROUND ONLY (tanks/mech): BAM is the mid frontline lane now, so the pump
+-- fields raiders/rockets/arty/tanks — no aircraft (air lives on the SOL back
+-- lane). T2/T3 verified present in the installed game archive.
 local UNITS = {
     arm = {
-        t1 = { "armpw", "armrock", "armham", "armstump", "armfig", "armthund" },
+        t1 = { "armpw", "armrock", "armham", "armstump" },
         t2 = { "armfido", "armbull", "armmav", "armzeus" },
         t3 = { "armbanth" },
     },
     cor = {
-        t1 = { "corak", "corstorm", "corthud", "corraid", "corveng", "corshad" },
+        t1 = { "corak", "corstorm", "corthud", "corraid" },
         t2 = { "corsumo", "correap", "corcat" },
         t3 = { "corkorg" },
     },

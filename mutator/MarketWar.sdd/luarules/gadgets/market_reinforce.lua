@@ -43,11 +43,13 @@ local COMEBACK_DROP_MIN_ARMY = 1500   -- strong-side floor (match income's COMEB
 -- lane kind decides squad composition AND spawn point: sea lanes drop ships
 -- IN their ocean (per-team deep-water coords from the heightmap), air lanes
 -- drop aircraft at base, land lanes drop the mixed ground squad at base.
+-- BAM<->SOL swapped 2026-07-15: BAM is now the MID land frontline (its drops
+-- funnel through the isthmus choke), SOL the BACK air lane (drops fly direct).
 local PAIRS = {
-    { key = "sol",  mkt = "SOL",  asset = 0, usd = 1, whale = 180, kind = "land" },
+    { key = "sol",  mkt = "SOL",  asset = 0, usd = 1, whale = 180, kind = "air" },
     { key = "spx",  mkt = "SPX",  asset = 2, usd = 3, whale = 2,   kind = "sea" },
     { key = "gold", mkt = "GOLD", asset = 4, usd = 5, whale = 4,   kind = "sea" },
-    { key = "bam",  mkt = "BAM",  asset = 6, usd = 7, whale = 20,  kind = "air", flipPct = 2.0 },
+    { key = "bam",  mkt = "BAM",  asset = 6, usd = 7, whale = 20,  kind = "land", flipPct = 2.0 },
 }
 
 -- Deep-water drop points per sea team (from the map heightmap, ~-40..-70 depth)

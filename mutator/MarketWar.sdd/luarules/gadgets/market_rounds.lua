@@ -46,11 +46,11 @@ local SEA_DROP = {   -- deep water per sea team (mirror market_conveyor.lua)
     [4] = { x = 10695, z = 9952 },  -- SE coastline
     [5] = { x = 6800, z = 11000 },
 }
-local INSURE_DEF = {  -- teamID -> factory unitdef name
-    [0] = "armlab", [1] = "corlab",     -- SOL: ground
+local INSURE_DEF = {  -- teamID -> factory unitdef name (BAM<->SOL swapped)
+    [0] = "armap",  [1] = "corap",      -- SOL: air (back lane)
     [2] = "armsy",  [3] = "corsy",      -- SP500: naval
     [4] = "armsy",  [5] = "corsy",      -- GOLD: naval
-    [6] = "armap",  [7] = "corap",      -- BAM: air
+    [6] = "armlab", [7] = "corlab",     -- BAM: ground (mid frontline)
 }
 local noFactorySince = {}   -- teamID -> frame
 local insurePos             -- forward declaration (defined below)
