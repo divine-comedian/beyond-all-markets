@@ -168,7 +168,16 @@ end
 
 local function screenPos(bp, dy)
     local sx, sy, sz = Spring.WorldToScreenCoords(bp.x, bp.y + (dy or 0), bp.z)
-    if sz and sz < 1 then return sx, sy end
+    -- sz<1 = in front of the camera, but WorldToScreenCoords can still hand
+    -- back +-Inf/NaN for sx/sy at degenerate angles (w~0 div0); those pass the
+    -- sz gate yet crash gl.Text ("number expected, got +-Inf") and get the whole
+    -- HUD widget removed. Reject any non-finite coord.
+    if sz and sz < 1
+        and sx == sx and sy == sy
+        and sx ~= math.huge and sx ~= -math.huge
+        and sy ~= math.huge and sy ~= -math.huge then
+        return sx, sy
+    end
     return nil
 end
 
@@ -190,6 +199,8 @@ function widget:DrawScreen()
         local gy = Spring.GetGroundHeight(mx, mz) or 0
         local px, py, pz = Spring.WorldToScreenCoords(mx, math.max(gy, 0) + 500, mz)
         if not (pz and pz < 1) then return end
+        if px ~= px or py ~= py or px == math.huge or px == -math.huge
+            or py == math.huge or py == -math.huge then return end
         local flash = math.max(0, 1 - (now - l.tickAt) / 0.8)
         local target = l.tickDir > 0 and UP or DOWN
         local pc = {
