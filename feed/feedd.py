@@ -371,32 +371,92 @@ async def pumpdev_trades(buckets, bc, throttle, stats):
     import websockets
     seen = set()
 
+    # Proxy adoption: pump.fun mints tokens nonstop, so subscribing to EVERY
+    # new mint's trades (the old behaviour) blows past pumpdev's per-connection
+    # subscription cap -> 1008 "Subscription limit exceeded" -> reconnect loop,
+    # and it aggregates dozens of tokens' volume into BAM. Instead: sample a
+    # BOUNDED set of fresh mints, LOCK onto the first that shows real trades,
+    # then feed BAM from that one mint only. If it goes stale, reconnect (fresh
+    # subscriptions) and re-hunt.
+    CANDIDATE_CAP = 10    # max token-trade subs opened while hunting (stay well under pumpdev's limit)
+    ADOPT_TRADES  = 3     # trades from one mint that qualify it as "hot"
+    STALE_SEC     = 90    # adopted mint silent this long -> reconnect + re-hunt
+    HUNT_TIMEOUT  = 75    # no mint adopted this long -> reconnect + retry
+
     async def run():
         async with websockets.connect(PUMP_WS_URL, ping_interval=20) as ws:
+            adopted    = BAM_MINT or None
+            candidates = 0
+            hunt_hits  = {}          # mint -> trade count while hunting
+            conn_start = time.time()
+            last_trade = conn_start
+
             if BAM_MINT:
                 await ws.send(json.dumps({"method": "subscribeTokenTrade",
                                           "keys": [BAM_MINT]}))
                 print(f"pumpdev connected (mint {BAM_MINT})", flush=True)
             else:
                 await ws.send(json.dumps({"method": "subscribeNewToken"}))
-                print("pumpdev connected (proxy: newToken adoption)", flush=True)
+                print("pumpdev connected (proxy: hunting a hot mint)", flush=True)
+
             while True:
-                # staleness watchdog: no message in 125s -> raise -> reconnect
+                # no message in 125s -> raise -> reconnect
                 raw = await asyncio.wait_for(ws.recv(), timeout=125)
                 msg = json.loads(raw)
-                if (not BAM_MINT and isinstance(msg, dict)
-                        and msg.get("txType") == "create" and msg.get("mint")):
-                    await ws.send(json.dumps({"method": "subscribeTokenTrade",
-                                              "keys": [msg["mint"]]}))
+                now = time.time()
+                if not isinstance(msg, dict):
+                    continue
+
+                # HUNTING: subscribe to a capped set of fresh mints, adopt the
+                # first one that actually trades. Nothing feeds BAM yet.
+                if adopted is None:
+                    if (msg.get("txType") == "create" and msg.get("mint")
+                            and candidates < CANDIDATE_CAP):
+                        await ws.send(json.dumps({"method": "subscribeTokenTrade",
+                                                  "keys": [msg["mint"]]}))
+                        candidates += 1
+                    if msg.get("txType") in ("buy", "sell") and msg.get("mint"):
+                        mint = msg["mint"]
+                        hunt_hits[mint] = hunt_hits.get(mint, 0) + 1
+                        if hunt_hits[mint] >= ADOPT_TRADES:
+                            adopted, last_trade = mint, now
+                            print(f"pumpdev adopted hot mint {mint} "
+                                  f"({candidates} sampled)", flush=True)
+                    if now - conn_start > HUNT_TIMEOUT:
+                        raise RuntimeError("pumpdev: no hot mint found, reconnecting")
+                    continue
+
+                # ADOPTED: only that mint feeds BAM.
+                if msg.get("mint") != adopted:
+                    if now - last_trade > STALE_SEC:
+                        raise RuntimeError("pumpdev: adopted mint stale, re-hunting")
+                    continue
                 hit = route_pumpdev(msg, buckets, seen)
                 if hit:
                     m, sol, mcap, addr8, sig8 = hit
+                    last_trade = now
                     stats.hit("BAM", "PF", sol, mcap)
                     bc.send(format_bam(m, sol, mcap, addr8, sig8))   # never throttled
                     if throttle.allow(sol, time.time()):
                         bc.send(format_trade("BAM", m, sol, mcap, "PF"))
 
-    await _reconnecting("pumpdev", run)
+    # pumpdev-specific reconnect: on 1008 "Subscription limit exceeded" the
+    # server is rate-limiting the IP (lingering subs from prior connections),
+    # so a flat 3s retry just re-trips it. Back off exponentially to let the
+    # server expire our old subscription state; reset on a clean run.
+    backoff = 3
+    while True:
+        try:
+            await run()
+            backoff = 3
+        except Exception as e:
+            emsg = str(e).lower()
+            if "1008" in emsg or "subscription limit" in emsg:
+                backoff = min(backoff * 2, 120)
+            else:
+                backoff = 3
+            print(f"pumpdev reconnect: {e} (retry in {backoff}s)", flush=True)
+            await asyncio.sleep(backoff)
 
 
 class FeedStats:
