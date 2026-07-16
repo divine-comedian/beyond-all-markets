@@ -33,13 +33,14 @@ local WHITE = { 0.95, 0.95, 0.95 }
 -- toward the lane's corner (ox/oz are fractions of map size) so the three
 -- tickers spread apart instead of crowding the center
 -- Tickers sit at FIXED, on-lane positions (tx,tz in elmos), one per quadrant so they
--- spread out and never get shoved off-map by base-relative offset math. BAM is the air
+-- spread out and never get shoved off-map by base-relative offset math. SOL is the air
 -- lane spanning NE<->SW, so it shows a ticker in each of those two quadrants (tx2,tz2).
+-- (BAM<->SOL swapped 2026-07-15: BAM now sits mid, SOL in the NE/SW corners.)
 local LANES = {
     { key = "spx",  mkt = "SPX",  asset = 2, usd = 3, label = "SP500", tx = 4275, tz = 3300 },
-    { key = "sol",  mkt = "SOL",  asset = 0, usd = 1, label = "SOL",   tx = 6100, tz = 6150 },
+    { key = "bam",  mkt = "BAM",  asset = 6, usd = 7, label = "BAM",   tx = 6100, tz = 6150 },
     { key = "gold", mkt = "GOLD", asset = 4, usd = 5, label = "GOLD",  tx = 8670, tz = 8500 },
-    { key = "bam",  mkt = "BAM",  asset = 6, usd = 7, label = "BAM",   tx = 9200, tz = 2800, tx2 = 2800, tz2 = 9200 },
+    { key = "sol",  mkt = "SOL",  asset = 0, usd = 1, label = "SOL",   tx = 9200, tz = 2800, tx2 = 2800, tz2 = 9200 },
 }
 
 local VOL_CAP    = 5                  -- full-scale pulse (SOL-equivalent notional units)
@@ -168,7 +169,16 @@ end
 
 local function screenPos(bp, dy)
     local sx, sy, sz = Spring.WorldToScreenCoords(bp.x, bp.y + (dy or 0), bp.z)
-    if sz and sz < 1 then return sx, sy end
+    -- sz<1 = in front of the camera, but WorldToScreenCoords can still hand
+    -- back +-Inf/NaN for sx/sy at degenerate angles (w~0 div0); those pass the
+    -- sz gate yet crash gl.Text ("number expected, got +-Inf") and get the whole
+    -- HUD widget removed. Reject any non-finite coord.
+    if sz and sz < 1
+        and sx == sx and sy == sy
+        and sx ~= math.huge and sx ~= -math.huge
+        and sy ~= math.huge and sy ~= -math.huge then
+        return sx, sy
+    end
     return nil
 end
 
@@ -190,6 +200,8 @@ function widget:DrawScreen()
         local gy = Spring.GetGroundHeight(mx, mz) or 0
         local px, py, pz = Spring.WorldToScreenCoords(mx, math.max(gy, 0) + 500, mz)
         if not (pz and pz < 1) then return end
+        if px ~= px or py ~= py or px == math.huge or px == -math.huge
+            or py == math.huge or py == -math.huge then return end
         local flash = math.max(0, 1 - (now - l.tickAt) / 0.8)
         local target = l.tickDir > 0 and UP or DOWN
         local pc = {

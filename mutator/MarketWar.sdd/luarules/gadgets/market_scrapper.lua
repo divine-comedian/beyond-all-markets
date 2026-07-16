@@ -100,15 +100,17 @@ function gadget:GameFrame(f)
             end
         end
     end
-    -- One telemetry line per tick (once/min), same Spring.Echo channel as
-    -- market_export's MKTWAR-* snapshots so the infolog/web-spectator tooling
-    -- picks it up: this tick's spawn total + per-team live scrapper counts.
+    -- One telemetry line per tick (once/min): spawn total + per-team live
+    -- scrapper counts. MUST be Spring.Log (infolog only), NOT Spring.Echo —
+    -- in the Option-B cloud host the host engine IS the streamed one, so Echo
+    -- paints the public broadcast. Log keeps it off-screen; infolog/web tooling
+    -- still picks it up.
     local function nalive(t)
         local n = 0
         for _ in pairs(alive[t]) do n = n + 1 end
         return n
     end
-    Spring.Echo(string.format("MKTWAR-SCRAP f=%d spawned=%d alive=%d/%d/%d/%d",
+    Spring.Log("MKTWAR", "info", string.format("MKTWAR-SCRAP f=%d spawned=%d alive=%d/%d/%d/%d",
         f, spawned, nalive(2), nalive(3), nalive(4), nalive(5)))
 end
 

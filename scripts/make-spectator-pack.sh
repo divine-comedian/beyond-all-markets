@@ -8,12 +8,32 @@ source "$(dirname "$0")/../config/war.env"
 HOST_IP="${1:?usage: make-spectator-pack.sh <host-ip> [out-dir]}"
 OUT="${2:-$ROOT/dist}"
 
-# Same CI run as the installed host engine, windows artifact
-run_id=$(gh run list -R beyond-all-reason/RecoilEngine -b master \
-           -w "Build Engine v2" -s success -L 1 --json databaseId \
-           --jq '.[0].databaseId')
-echo "NOTE: pack engine = newest CI run ($run_id). Host must run the same build" \
-     "(re-run install.sh with engine-master/ removed if the host is older)."
+# The pack engine MUST match the host engine bit-for-bit or spectators desync on
+# join. The host build is often NOT the newest CI run (engine-master/ is only
+# refreshed by install.sh), so pin the run explicitly. Priority:
+#   1. PACK_ENGINE_RUN_ID env / 3rd arg  -> use verbatim
+#   2. else derive the host engine commit and find its "Build Engine v2" run
+#   3. else fall back to newest (with a loud warning)
+run_id="${PACK_ENGINE_RUN_ID:-${3:-}}"
+if [ -z "$run_id" ]; then
+    host_sha=$(LD_LIBRARY_PATH="$SYSLIBS_DIR" "$ENGINE_DIR/spring-headless" --version 2>/dev/null \
+                 | grep -oE '\-g[0-9a-f]+' | head -1 | sed 's/^-g//')
+    if [ -n "$host_sha" ]; then
+        run_id=$(gh api "repos/beyond-all-reason/RecoilEngine/actions/runs?head_sha=$host_sha&per_page=20" \
+                   --jq '[.workflow_runs[] | select(.name=="Build Engine v2" and .conclusion=="success")][0].id' 2>/dev/null)
+        [ "$run_id" = "null" ] && run_id=""
+    fi
+    if [ -n "$run_id" ]; then
+        echo "Pinned pack engine to host build $host_sha (Build Engine v2 run $run_id)."
+    else
+        run_id=$(gh run list -R beyond-all-reason/RecoilEngine -b master \
+                   -w "Build Engine v2" -s success -L 1 --json databaseId --jq '.[0].databaseId')
+        echo "WARNING: could not match host engine commit; using NEWEST CI run ($run_id)." \
+             "If the host is not on this build, spectators WILL desync."
+    fi
+else
+    echo "Pack engine pinned via PACK_ENGINE_RUN_ID/arg = $run_id."
+fi
 
 mkdir -p "$OUT"
 tmp=$(mktemp -d)
