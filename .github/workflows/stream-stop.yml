@@ -1,0 +1,46 @@
+name: stream-stop
+
+# Daily: flip the site to REPLAY (latest archived match, looped), THEN stop the GPU box.
+# The site is updated before the box stops so viewers roll straight onto the archive.
+#
+# SAFETY: scheduled runs ONLY fire from the repo's DEFAULT branch (see stream-start.yml).
+# ADJUST the cron to start-time + 3h. Requires: secrets VAST_API_KEY, YT_API_KEY;
+# vars VAST_INSTANCE_ID, YT_CHANNEL_ID.
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 20 * * *" # 20:00 UTC daily = 3h after start — CHANGE ME
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-stream
+  cancel-in-progress: false
+
+jobs:
+  stop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Point the site at the latest archived match
+        env:
+          YT_API_KEY: ${{ secrets.YT_API_KEY }}
+        run: |
+          python3 scripts/stream-cron/update-state.py \
+            --mode replay --channel "${{ vars.YT_CHANNEL_ID }}" --out site/state.json
+
+      - name: Commit & push state.json
+        run: |
+          git config user.name  "stream-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add site/state.json
+          git diff --cached --quiet || git commit -m "chore(site): replay mode — latest archived match"
+          git push
+
+      - name: Stop the Vast GPU box
+        run: |
+          python3 -m pip install --quiet vastai
+          vastai stop instance "${{ vars.VAST_INSTANCE_ID }}" --api-key "${{ secrets.VAST_API_KEY }}"

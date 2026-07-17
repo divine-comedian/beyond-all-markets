@@ -1,0 +1,47 @@
+name: stream-start
+
+# Daily: start the GPU box (it auto-streams via pm2 on boot) and flip the site to LIVE.
+#
+# SAFETY: scheduled runs ONLY fire from the repo's DEFAULT branch. While these workflows
+# live on a feature branch nothing runs on a schedule — merge to the default branch to
+# activate. You can also run it by hand any time via "Run workflow" (workflow_dispatch).
+#
+# ADJUST the cron to your daily start time (UTC). Requires repo config (see
+# docs/daily-stream-loop.md): secret VAST_API_KEY; vars VAST_INSTANCE_ID, YT_CHANNEL_ID;
+# and the site must deploy from the branch these workflows commit to.
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 17 * * *" # 17:00 UTC daily — CHANGE ME to your window's start
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-stream # start and stop never overlap
+  cancel-in-progress: false
+
+jobs:
+  start:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start the Vast GPU box
+        run: |
+          python3 -m pip install --quiet vastai
+          vastai start instance "${{ vars.VAST_INSTANCE_ID }}" --api-key "${{ secrets.VAST_API_KEY }}"
+
+      - name: Point the site at the LIVE stream
+        run: |
+          python3 scripts/stream-cron/update-state.py \
+            --mode live --channel "${{ vars.YT_CHANNEL_ID }}" --out site/state.json
+
+      - name: Commit & push state.json
+        run: |
+          git config user.name  "stream-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add site/state.json
+          git diff --cached --quiet || git commit -m "chore(site): live mode — daily stream start"
+          git push
